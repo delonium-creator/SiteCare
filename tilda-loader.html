@@ -1,0 +1,135 @@
+<!-- Совместимость со старым одностраничным кабинетом. Для нового редактора копируйте код только из центральной панели SiteCare. -->
+<script>
+(function () {
+  "use strict";
+
+  var LOCK = {
+    hostname: "ketedes.tilda.ws",
+    pathname: "/page169452909.html",
+    siteId: "ketedes-page169452909",
+    codeBlockId: "rec2720212301"
+  };
+  var API_URL = "https://PUT-YOUR-WORKER.workers.dev/api/public/config";
+  var SELECTORS = {
+    phone: "#rec2720115601 .t-text",
+    hours: "#rec2720131801 .t-text",
+    cta: "#rec2720147501 a.t-btnflex",
+    ctaText: "#rec2720147501 .t-btnflex__text"
+  };
+  var originals = null;
+
+  if (window.location.hostname !== LOCK.hostname || window.location.pathname !== LOCK.pathname) return;
+
+  function exactlyOne(selector) {
+    var items = document.querySelectorAll(selector);
+    return items.length === 1 ? items[0] : null;
+  }
+
+  function targets() {
+    return {
+      phone: exactlyOne(SELECTORS.phone),
+      hours: exactlyOne(SELECTORS.hours),
+      cta: exactlyOne(SELECTORS.cta),
+      ctaText: exactlyOne(SELECTORS.ctaText)
+    };
+  }
+
+  function ready(items) {
+    return items.phone && items.hours && items.cta && items.ctaText;
+  }
+
+  function remember(items) {
+    if (originals) return;
+    originals = {
+      phone: items.phone.textContent || "",
+      hours: items.hours.textContent || "",
+      hoursWhiteSpace: items.hours.style.whiteSpace || "",
+      ctaText: items.ctaText.textContent || "",
+      ctaLink: items.cta.getAttribute("href") || ""
+    };
+  }
+
+  function restore(items) {
+    if (!originals) return;
+    items.phone.textContent = originals.phone;
+    items.hours.textContent = originals.hours;
+    items.hours.style.whiteSpace = originals.hoursWhiteSpace;
+    items.ctaText.textContent = originals.ctaText;
+    items.cta.setAttribute("href", originals.ctaLink);
+  }
+
+  function valid(data) {
+    return data &&
+      data.siteId === LOCK.siteId &&
+      data.hostname === LOCK.hostname &&
+      data.pathname === LOCK.pathname &&
+      typeof data.version === "number";
+  }
+
+  function safeLink(value) {
+    if (typeof value !== "string" || !value || value.length > 500 || /[\u0000-\u001F\u007F]/u.test(value)) return false;
+    if (/^https:\/\//i.test(value)) {
+      try {
+        var url = new URL(value);
+        return Boolean(url.hostname) && !url.username && !url.password;
+      } catch (error) { return false; }
+    }
+    return (/^tel:\+?[\d\s().-]{5,40}$/i.test(value) && /\d/.test(value)) ||
+      /^mailto:[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+(?:\?[^\s<>]*)?$/i.test(value) ||
+      /^\/(?!\/)[a-zA-Z0-9_/?#&=.%+-]*$/.test(value) ||
+      /^#[a-zA-Z0-9_-]+$/.test(value);
+  }
+
+  function apply(data) {
+    var items = targets();
+    if (!ready(items) || !valid(data)) return;
+    remember(items);
+    if (!data.enabled) {
+      restore(items);
+      return;
+    }
+    if (
+      typeof data.phone !== "string" || data.phone.length > 40 ||
+      typeof data.hours !== "string" || data.hours.length > 300 ||
+      typeof data.ctaText !== "string" || data.ctaText.length > 60 ||
+      !safeLink(data.ctaLink)
+    ) return;
+    items.phone.textContent = "Телефон: " + data.phone;
+    items.hours.textContent = data.hours;
+    items.hours.style.whiteSpace = data.hours.includes("\n") ? "pre-line" : originals.hoursWhiteSpace;
+    items.ctaText.textContent = data.ctaText;
+    items.cta.setAttribute("href", data.ctaLink);
+  }
+
+  function load() {
+    fetch(API_URL, { method: "GET", mode: "cors", cache: "no-cache", credentials: "omit" })
+      .then(function (response) {
+        if (!response.ok) throw new Error("SiteCare unavailable");
+        return response.json();
+      })
+      .then(function (data) {
+        apply(data);
+      })
+      .catch(function () {
+        /* При первом сбое остаётся исходная страница Tilda; после успешной загрузки — последнее рабочее значение. */
+      });
+  }
+
+  function start(attempt) {
+    var items = targets();
+    if (!ready(items)) {
+      if (attempt < 30) window.setTimeout(function () { start(attempt + 1); }, 200);
+      return;
+    }
+    remember(items);
+    load();
+    window.setInterval(load, 60000);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () { start(0); });
+  } else {
+    start(0);
+  }
+})();
+</script>

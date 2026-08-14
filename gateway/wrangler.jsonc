@@ -1,0 +1,32 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "sitecare-telegram-gateway",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-04",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "assets": {
+    "directory": "./public"
+  },
+  "vars": {
+    "CONNECT_TTL_MINUTES": "15",
+    "OPENAI_MODEL": "gpt-5-mini"
+  },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "GATEWAY_DB",
+      "database_name": "sitecare-telegram-gateway-db",
+      "database_id": "PUT_GATEWAY_DATABASE_ID_HERE",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
