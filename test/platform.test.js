@@ -41,7 +41,10 @@ const PLATFORM_MIGRATIONS = [
   "gateway/migrations/0010_action_limits.sql",
   "gateway/migrations/0011_targeted_phone_rules.sql",
   "gateway/migrations/0012_precise_phone_targets.sql",
-  "gateway/migrations/0013_reliability_privacy.sql"
+  "gateway/migrations/0013_reliability_privacy.sql",
+  "gateway/migrations/0014_health_score.sql",
+  "gateway/migrations/0015_digests.sql",
+  "gateway/migrations/0016_review_sources.sql"
 ];
 
 test("site-wide loader safely recognizes visible phone numbers", () => {

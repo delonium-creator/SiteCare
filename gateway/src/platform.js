@@ -48,7 +48,7 @@ import {
   sendSupportReplyEmail,
   sendSupportRequestEmail
 } from "./platform-email.js";
-import { checkPlatformSite, inspectSite, runDuePlatformChecks, scanSiteInventory, siteReport } from "./platform-monitor.js";
+import { checkPlatformSite, inspectSite, runDuePlatformChecks, runDueHealthScans, runDueDigests, scanSiteInventory, siteReport } from "./platform-monitor.js";
 import { prepareSiteChange } from "./platform-assistant.js";
 import { encryptProtectedJson, leadRowToPublic, normalizeLeadSubmission } from "./platform-leads.js";
 import {
@@ -941,7 +941,10 @@ async function addSite(request, env, user, accountId) {
     ).bind(siteId, now),
     env.GATEWAY_DB.prepare(
       "INSERT INTO platform_override_history (site_id, version, enabled, phone, schedule_text, button_text, button_url, created_by, created_at) VALUES (?, 1, 0, '', '', '', '', ?, ?)"
-    ).bind(siteId, user.user_id, now)
+    ).bind(siteId, user.user_id, now),
+    env.GATEWAY_DB.prepare(
+      "UPDATE platform_sites SET next_digest_at = ? WHERE site_id = ?"
+    ).bind(nextCheckAt(7 * 24 * 60, new Date(now)), siteId)
   ]);
   if (account.billing_status === "trial_pending") {
     const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -2660,7 +2663,16 @@ export async function handlePlatformRoute(request, env, path) {
 }
 
 export async function scheduledPlatformChecks(env) {
-  return runDuePlatformChecks(env);
+  const [monitor, health, digests] = await Promise.allSettled([
+    runDuePlatformChecks(env),
+    runDueHealthScans(env),
+    runDueDigests(env)
+  ]);
+  return {
+    monitor: monitor.status === "fulfilled" ? monitor.value : { error: true },
+    health: health.status === "fulfilled" ? health.value : { error: true },
+    digests: digests.status === "fulfilled" ? digests.value : { error: true }
+  };
 }
 
 export const platformInternals = Object.freeze({ accountDetails, enforceActionLimit, platformStatus, requestJson, sessionUser });

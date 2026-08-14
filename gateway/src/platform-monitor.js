@@ -322,6 +322,11 @@ function diagnosticIssue({ id, category, severity = "medium", title, page, evide
   };
 }
 
+export function computeHealthScore({ high = 0, medium = 0, low = 0 } = {}) {
+  const score = 100 - 15 * Number(high || 0) - 5 * Number(medium || 0) - 1 * Number(low || 0);
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
 export function diagnosePage(html, pageUrl, observation = {}) {
   const source = String(html || "");
   const url = new URL(validateTargetUrl(pageUrl));
@@ -680,7 +685,7 @@ export async function inspectSite(site, fetchImpl = fetch) {
   }
 }
 
-async function sendNotification(env, site, eventId, eventType, text) {
+export async function sendNotification(env, site, eventId, eventType, text) {
   const destination = await env.GATEWAY_DB.prepare(
     "SELECT chat_id, enabled FROM telegram_destinations WHERE site_id = ?"
   ).bind(site.site_id).first();
@@ -829,19 +834,156 @@ export async function checkPlatformSite(env, site, { notify = true, fetchImpl = 
   return result;
 }
 
+// Shared by every "which sites currently pay for Site Control" scheduled job
+// (uptime monitor, health score scan, weekly digest) so the trial/billing
+// eligibility rules live in exactly one place.
+const ACTIVE_CONTROL_SITES_FROM_WHERE =
+  "FROM platform_sites s JOIN platform_accounts a ON a.account_id = s.account_id " +
+  "LEFT JOIN platform_billing b ON b.account_id = a.account_id " +
+  "LEFT JOIN platform_account_features f ON f.account_id = a.account_id AND f.feature_key = 'control' " +
+  "WHERE s.status = 'active' AND s.integration_mode = 'central' AND a.status = 'active' " +
+  "AND ((f.status IN ('trial_pending', 'active', 'complimentary')) OR (f.status = 'trial' AND (f.current_period_end IS NULL OR f.current_period_end > ?)) " +
+  "OR (f.status IS NULL AND ((b.status IS NULL AND (a.plan != 'trial' OR a.trial_ends_at IS NULL OR a.trial_ends_at > ?)) " +
+  "OR b.status IN ('trial_pending', 'active', 'complimentary') OR (b.status = 'trial' AND (b.current_period_end IS NULL OR b.current_period_end > ?)))))";
+
 export async function runDuePlatformChecks(env, { limit = 25 } = {}) {
   const now = new Date().toISOString();
   const rows = await env.GATEWAY_DB.prepare(
-    "SELECT s.* FROM platform_sites s JOIN platform_accounts a ON a.account_id = s.account_id LEFT JOIN platform_billing b ON b.account_id = a.account_id LEFT JOIN platform_account_features f ON f.account_id = a.account_id AND f.feature_key = 'control' " +
-    "WHERE s.status = 'active' AND s.integration_mode = 'central' AND a.status = 'active' " +
-    "AND ((f.status IN ('trial_pending', 'active', 'complimentary')) OR (f.status = 'trial' AND (f.current_period_end IS NULL OR f.current_period_end > ?)) " +
-    "OR (f.status IS NULL AND ((b.status IS NULL AND (a.plan != 'trial' OR a.trial_ends_at IS NULL OR a.trial_ends_at > ?)) " +
-    "OR b.status IN ('trial_pending', 'active', 'complimentary') OR (b.status = 'trial' AND (b.current_period_end IS NULL OR b.current_period_end > ?))))) " +
-    "AND (s.next_monitor_at IS NULL OR s.next_monitor_at <= ?) ORDER BY COALESCE(s.next_monitor_at, s.created_at) LIMIT ?"
+    `SELECT s.* ${ACTIVE_CONTROL_SITES_FROM_WHERE} AND (s.next_monitor_at IS NULL OR s.next_monitor_at <= ?) ORDER BY COALESCE(s.next_monitor_at, s.created_at) LIMIT ?`
   ).bind(now, now, now, now, Math.min(25, Math.max(1, Number(limit) || 10))).all();
   const sites = rows?.results || [];
   const settled = await Promise.allSettled(sites.map((site) => checkPlatformSite(env, site, { notify: true })));
   return { checked: sites.length, failed: settled.filter((item) => item.status === "rejected").length };
+}
+
+// Full diagnostics (SEO, accessibility, mixed content, etc.) are heavier than
+// the uptime/form check, so the health score runs once a day per site rather
+// than on every 5-minute monitor tick.
+async function runSiteHealthScan(env, site, fetchImpl = fetch) {
+  const inventory = await scanSiteInventory(site, fetchImpl, { maxPages: site.scope === "site" ? 40 : 1 });
+  const summary = inventory.diagnostics?.summary || { high: 0, medium: 0, low: 0, total: 0 };
+  const score = computeHealthScore(summary);
+  const checkedAt = new Date().toISOString();
+  await env.GATEWAY_DB.batch([
+    env.GATEWAY_DB.prepare(
+      "UPDATE platform_sites SET last_health_check_at = ?, next_health_check_at = ?, health_score = ?, updated_at = ? WHERE site_id = ?"
+    ).bind(checkedAt, nextCheckAt(24 * 60, new Date(checkedAt)), score, checkedAt, site.site_id),
+    env.GATEWAY_DB.prepare(
+      "INSERT INTO platform_health_history (site_id, checked_at, score, high, medium, low, issue_count) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).bind(site.site_id, checkedAt, score, summary.high || 0, summary.medium || 0, summary.low || 0, summary.total || 0),
+    env.GATEWAY_DB.prepare(
+      "DELETE FROM platform_health_history WHERE site_id = ? AND id NOT IN (SELECT id FROM platform_health_history WHERE site_id = ? ORDER BY id DESC LIMIT 60)"
+    ).bind(site.site_id, site.site_id)
+  ]);
+  return { score, ...summary };
+}
+
+export async function runDueHealthScans(env, { limit = 10, fetchImpl = fetch } = {}) {
+  const now = new Date().toISOString();
+  const rows = await env.GATEWAY_DB.prepare(
+    `SELECT s.* ${ACTIVE_CONTROL_SITES_FROM_WHERE} AND (s.next_health_check_at IS NULL OR s.next_health_check_at <= ?) ORDER BY COALESCE(s.next_health_check_at, s.created_at) LIMIT ?`
+  ).bind(now, now, now, now, Math.min(10, Math.max(1, Number(limit) || 5))).all();
+  const sites = rows?.results || [];
+  const settled = await Promise.allSettled(sites.map((site) => runSiteHealthScan(env, site, fetchImpl)));
+  return { scanned: sites.length, failed: settled.filter((item) => item.status === "rejected").length };
+}
+
+// Always frames the week as a result, never as an absence of work — "checked
+// N times, steady" is the honest positive version of "nothing broke".
+export function buildDigestSummary({
+  score = null,
+  scoreDelta = 0,
+  checksCount = 0,
+  incidentsOpened = 0,
+  incidentsResolved = 0,
+  findingsCount = 0
+} = {}) {
+  const scoreLine = score === null
+    ? ""
+    : ` Индекс здоровья: ${score}${scoreDelta > 0 ? ` (+${scoreDelta})` : scoreDelta < 0 ? ` (${scoreDelta})` : " (без изменений)"}.`;
+  if (incidentsOpened === 0 && findingsCount === 0) {
+    return `За неделю сайт проверен ${checksCount} раз — всё стабильно, поводов для беспокойства не найдено.${scoreLine}`;
+  }
+  const parts = [`За неделю сайт проверен ${checksCount} раз.`];
+  if (incidentsOpened > 0) {
+    parts.push(`Обнаружено проблем с доступностью: ${incidentsOpened}, устранено: ${incidentsResolved}.`);
+  }
+  if (findingsCount > 0) {
+    parts.push(`Диагностика нашла ${findingsCount} момент${findingsCount === 1 ? "" : "ов"}, которые стоит поправить.`);
+  }
+  return `${parts.join(" ")}${scoreLine}`;
+}
+
+async function sendDigest(env, site, digest) {
+  const text = `📋 SiteCare: итоги недели\n${site.name}\n${digest.summaryText}`;
+  return sendNotification(env, site, `${site.site_id}:digest:${digest.periodEnd}`, "digest", text);
+}
+
+async function runSiteDigest(env, site) {
+  const now = new Date();
+  const periodEnd = now.toISOString();
+  const periodStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const [checksRow, incidentsRow, latestHealth, priorHealth] = await Promise.all([
+    env.GATEWAY_DB.prepare(
+      "SELECT COUNT(*) AS count FROM platform_monitor_runs WHERE site_id = ? AND checked_at >= ?"
+    ).bind(site.site_id, periodStart).first(),
+    env.GATEWAY_DB.prepare(
+      "SELECT SUM(CASE WHEN opened_at >= ? THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN resolved_at >= ? THEN 1 ELSE 0 END) AS resolved FROM platform_incidents WHERE site_id = ? AND (opened_at >= ? OR resolved_at >= ?)"
+    ).bind(periodStart, periodStart, site.site_id, periodStart, periodStart).first(),
+    env.GATEWAY_DB.prepare(
+      "SELECT score, issue_count FROM platform_health_history WHERE site_id = ? ORDER BY checked_at DESC LIMIT 1"
+    ).bind(site.site_id).first(),
+    env.GATEWAY_DB.prepare(
+      "SELECT score FROM platform_health_history WHERE site_id = ? AND checked_at <= ? ORDER BY checked_at DESC LIMIT 1"
+    ).bind(site.site_id, periodStart).first()
+  ]);
+  const score = latestHealth ? Number(latestHealth.score) : null;
+  const scoreDelta = latestHealth && priorHealth ? Number(latestHealth.score) - Number(priorHealth.score) : 0;
+  const summaryText = buildDigestSummary({
+    score,
+    scoreDelta,
+    checksCount: Number(checksRow?.count || 0),
+    incidentsOpened: Number(incidentsRow?.opened || 0),
+    incidentsResolved: Number(incidentsRow?.resolved || 0),
+    findingsCount: Number(latestHealth?.issue_count || 0)
+  });
+  const digestId = newId("dig", `${site.site_id}-${periodEnd}`);
+  const digest = {
+    digestId,
+    periodStart,
+    periodEnd,
+    score,
+    scoreDelta,
+    checksCount: Number(checksRow?.count || 0),
+    incidentsOpened: Number(incidentsRow?.opened || 0),
+    incidentsResolved: Number(incidentsRow?.resolved || 0),
+    findingsCount: Number(latestHealth?.issue_count || 0),
+    summaryText
+  };
+  const delivery = await sendDigest(env, site, digest);
+  const sentAt = delivery.sent ? new Date().toISOString() : null;
+  await env.GATEWAY_DB.batch([
+    env.GATEWAY_DB.prepare(
+      "INSERT INTO platform_digests (digest_id, site_id, period_start, period_end, score, score_delta, checks_count, incidents_opened, incidents_resolved, findings_count, summary_text, sent_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(digestId, site.site_id, periodStart, periodEnd, digest.score, digest.scoreDelta, digest.checksCount, digest.incidentsOpened, digest.incidentsResolved, digest.findingsCount, summaryText, sentAt, periodEnd),
+    env.GATEWAY_DB.prepare(
+      "UPDATE platform_sites SET next_digest_at = ? WHERE site_id = ?"
+    ).bind(nextCheckAt(7 * 24 * 60, now), site.site_id),
+    env.GATEWAY_DB.prepare(
+      "DELETE FROM platform_digests WHERE site_id = ? AND digest_id NOT IN (SELECT digest_id FROM platform_digests WHERE site_id = ? ORDER BY created_at DESC LIMIT 26)"
+    ).bind(site.site_id, site.site_id)
+  ]);
+  return digest;
+}
+
+export async function runDueDigests(env, { limit = 10 } = {}) {
+  const now = new Date().toISOString();
+  const rows = await env.GATEWAY_DB.prepare(
+    `SELECT s.* ${ACTIVE_CONTROL_SITES_FROM_WHERE} AND s.next_digest_at IS NOT NULL AND s.next_digest_at <= ? ORDER BY s.next_digest_at LIMIT ?`
+  ).bind(now, now, now, now, Math.min(10, Math.max(1, Number(limit) || 5))).all();
+  const sites = rows?.results || [];
+  const settled = await Promise.allSettled(sites.map((site) => runSiteDigest(env, site)));
+  return { sent: sites.length, failed: settled.filter((item) => item.status === "rejected").length };
 }
 
 export async function siteReport(env, siteId, days = 30) {
