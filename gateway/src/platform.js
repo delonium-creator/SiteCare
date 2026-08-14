@@ -639,7 +639,12 @@ async function accountDetails(env, account, role, platformRole = "user", { inclu
   const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const [sitesResult, membersResult, incidentsResult, usage, counts, receiptsResult, activityResult, notesResult, billingEventsResult, featureResult, leadsResult, invitesResult, accessRequestsResult] = await Promise.all([
     env.GATEWAY_DB.prepare(
-      "SELECT s.*, COALESCE(d.enabled, 0) AS telegram_enabled FROM platform_sites s LEFT JOIN telegram_destinations d ON d.site_id = s.site_id WHERE s.account_id = ? AND s.status != 'archived' ORDER BY s.created_at"
+      "SELECT s.*, COALESCE(d.enabled, 0) AS telegram_enabled, rs.yandex_widget_url, rs.dgis_widget_url, ld.summary_text AS digest_summary, ld.created_at AS digest_created_at " +
+      "FROM platform_sites s " +
+      "LEFT JOIN telegram_destinations d ON d.site_id = s.site_id " +
+      "LEFT JOIN platform_review_sources rs ON rs.site_id = s.site_id " +
+      "LEFT JOIN (SELECT site_id, summary_text, created_at FROM platform_digests d1 WHERE created_at = (SELECT MAX(created_at) FROM platform_digests d2 WHERE d2.site_id = d1.site_id)) ld ON ld.site_id = s.site_id " +
+      "WHERE s.account_id = ? AND s.status != 'archived' ORDER BY s.created_at"
     ).bind(account.account_id).all(),
     env.GATEWAY_DB.prepare(
       "SELECT u.user_id, u.email, u.display_name, u.status, m.role FROM platform_memberships m JOIN platform_users u ON u.user_id = m.user_id WHERE m.account_id = ? ORDER BY CASE m.role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 WHEN 'manager' THEN 3 ELSE 4 END, u.display_name"
@@ -1789,6 +1794,40 @@ async function siteOverrides(request, env, user, siteId) {
   return json({ ok: true, enabled: Boolean(enabled), version });
 }
 
+// Unlike validateTargetUrl (used for the site the Worker itself fetches),
+// this only ever ends up as an <iframe src> the client's browser loads, so
+// the query string (widget tokens/config) must survive intact.
+function reviewWidgetUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("Укажите полную ссылку src из кода виджета.");
+  }
+  if (url.protocol !== "https:" || !url.hostname) throw new Error("Ссылка на виджет должна быть полным HTTPS-адресом.");
+  return url.href;
+}
+
+async function updateReviewSources(request, env, user, siteId) {
+  if (user.platform_role !== "operator") fail("Доступ запрещён.", 403, "FORBIDDEN");
+  const { site } = await siteAccess(env, user, siteId, "manager");
+  const body = await requestJson(request);
+  const current = await env.GATEWAY_DB.prepare(
+    "SELECT yandex_widget_url, dgis_widget_url FROM platform_review_sources WHERE site_id = ?"
+  ).bind(siteId).first();
+  const yandexWidgetUrl = body.yandexWidgetUrl === undefined ? (current?.yandex_widget_url || null) : reviewWidgetUrl(body.yandexWidgetUrl);
+  const dgisWidgetUrl = body.dgisWidgetUrl === undefined ? (current?.dgis_widget_url || null) : reviewWidgetUrl(body.dgisWidgetUrl);
+  const now = new Date().toISOString();
+  await env.GATEWAY_DB.prepare(
+    "INSERT INTO platform_review_sources (site_id, yandex_widget_url, dgis_widget_url, updated_at, updated_by) VALUES (?, ?, ?, ?, ?) " +
+    "ON CONFLICT(site_id) DO UPDATE SET yandex_widget_url = excluded.yandex_widget_url, dgis_widget_url = excluded.dgis_widget_url, updated_at = excluded.updated_at, updated_by = excluded.updated_by"
+  ).bind(siteId, yandexWidgetUrl, dgisWidgetUrl, now, user.user_id).run();
+  await audit(env, user, site.account_id, "site.reviews.update", "site", siteId, [yandexWidgetUrl && "Яндекс", dgisWidgetUrl && "2ГИС"].filter(Boolean).join(", ") || "очищено");
+  return json({ ok: true, yandexWidgetUrl, dgisWidgetUrl });
+}
+
 async function rollbackOverrides(request, env, user, siteId) {
   const { site } = await siteAccess(env, user, siteId, "manager");
   await requireLoaderConnection(env, site);
@@ -2641,6 +2680,8 @@ export async function handlePlatformRoute(request, env, path) {
   if ((request.method === "GET" || request.method === "PATCH") && match) return siteOverrides(request, env, user, match[1]);
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/overrides\/rollback$/u.exec(path);
   if (request.method === "POST" && match) return rollbackOverrides(request, env, user, match[1]);
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/review-sources$/u.exec(path);
+  if (request.method === "POST" && match) return updateReviewSources(request, env, user, match[1]);
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(conversation|support)$/u.exec(path);
   if (match) {
     if (request.method === "GET" && match[2] === "conversation") return conversationState(env, user, match[1]);
