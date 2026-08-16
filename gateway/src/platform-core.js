@@ -646,7 +646,99 @@ function sitecareLoaderRuntime(replacePhoneText, makePhoneHref, replaceScheduleT
     }
   }
 
+  function selectionModeKind() {
+    try {
+      const value = new URLSearchParams(location.search).get("sitecare_select") || "";
+      return value === "phone" ? value : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function findPhoneSelectionCandidates() {
+    const results = [];
+    const counters = new Map();
+    const record = (element, source, rawPhone) => {
+      const digitsValue = String(rawPhone || "").replace(/\D/gu, "");
+      if (digitsValue.length < 10 || digitsValue.length > 15 || !element) return;
+      const blockId = targetBlock(element);
+      const key = `${blockId}|${source}|${digitsValue}`;
+      const occurrenceIndex = counters.get(key) || 0;
+      counters.set(key, occurrenceIndex + 1);
+      results.push({
+        element,
+        payload: {
+          kind: "phone",
+          pagePath: location.pathname || "/",
+          blockId,
+          source,
+          occurrenceIndex,
+          originalDigits: digitsValue,
+          phone: String(rawPhone || "").trim()
+        }
+      });
+    };
+    for (const link of document.querySelectorAll("a[href^='tel:']")) {
+      record(link, "link", (link.getAttribute("href") || "").replace(/^tel:/iu, ""));
+    }
+    if (typeof document.createTreeWalker === "function") {
+      const walker = document.createTreeWalker(document.body || document, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        const parent = node.parentElement;
+        if (parent && !parent.closest("a[href^='tel:']") && phoneTextMatches(node, "", false)) {
+          const match = /\+?\d[\d () .–—-]{7,}\d/u.exec(node.nodeValue || "");
+          if (match) record(parent, "text", match[0]);
+        }
+        node = walker.nextNode();
+      }
+    }
+    return results;
+  }
+
+  function startSelectionMode(kind) {
+    const candidates = kind === "phone" ? findPhoneSelectionCandidates() : [];
+    const style = document.createElement("style");
+    style.setAttribute("data-sitecare-ignore", "");
+    style.textContent = ".sitecare-select-target{outline:3px solid #6753e6!important;outline-offset:2px!important;cursor:pointer!important;background:rgba(103,83,230,.08)!important;transition:outline-color .15s}.sitecare-select-target:hover{outline-color:#39c07a!important;background:rgba(57,192,122,.1)!important}";
+    document.head?.appendChild(style);
+    const banner = document.createElement("div");
+    banner.setAttribute("data-sitecare-ignore", "");
+    banner.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#171b25;color:#fff;padding:12px 16px;font:600 14px/1.4 -apple-system,'Segoe UI',sans-serif;text-align:center;box-shadow:0 4px 14px rgba(0,0,0,.25)";
+    banner.textContent = candidates.length
+      ? "SiteCare: кликните по нужному номеру телефона"
+      : "SiteCare: на этой странице не нашлось номеров для выбора";
+    document.body?.appendChild(banner);
+    if (!candidates.length) return;
+    for (const item of candidates) item.element.classList.add("sitecare-select-target");
+    const finish = (payload) => {
+      for (const item of candidates) item.element.classList.remove("sitecare-select-target");
+      banner.textContent = "Готово — вернитесь во вкладку SiteCare.";
+      try {
+        window.opener?.postMessage({ channel: "sitecare-select", ...payload }, base);
+      } catch {
+        // A missing opener (e.g. the tab was opened manually) just leaves the banner visible.
+      }
+      window.setTimeout(() => {
+        try { window.close(); } catch {}
+      }, 900);
+    };
+    document.addEventListener("click", (event) => {
+      const match = candidates.find((item) => item.element === event.target || item.element.contains(event.target));
+      if (!match) return;
+      event.preventDefault();
+      event.stopPropagation();
+      finish(match.payload);
+    }, true);
+  }
+
   function start() {
+    const selectKind = selectionModeKind();
+    if (selectKind) {
+      startSelectionMode(selectKind);
+      document.documentElement?.setAttribute("data-sitecare-loader", "6");
+      return;
+    }
     observer = new MutationObserver((records) => {
       if (applying || !currentConfig?.enabled) return;
       for (const record of records) {

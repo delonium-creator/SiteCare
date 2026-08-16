@@ -49,7 +49,7 @@ import {
   sendSupportRequestEmail
 } from "./platform-email.js";
 import { checkPlatformSite, inspectSite, runDuePlatformChecks, runDueHealthScans, runDueDigests, scanSiteInventory, siteReport } from "./platform-monitor.js";
-import { prepareSiteChange } from "./platform-assistant.js";
+import { prepareSiteChange, phoneValueQuestion } from "./platform-assistant.js";
 import { encryptProtectedJson, leadRowToPublic, normalizeLeadSubmission } from "./platform-leads.js";
 import {
   appendConversationMessage,
@@ -1487,6 +1487,44 @@ async function assistantProposal(request, env, user, siteId) {
   });
 }
 
+async function assistantLocatePhone(request, env, user, siteId) {
+  const { site } = await siteAccess(env, user, siteId, "manager");
+  await enforceActionLimit(env, `assistant-locate:${user.user_id}:${siteId}`, 30, 300);
+  const body = await requestJson(request);
+  const pagePath = safeText(body.pagePath, 300) || "/";
+  const blockId = safeText(body.blockId, 60);
+  const source = body.source === "link" ? "link" : "text";
+  const originalDigits = String(body.originalDigits || "").replace(/\D/gu, "");
+  const requestedIndex = Number(body.occurrenceIndex);
+  if (originalDigits.length < 10 || originalDigits.length > 15) fail("Не удалось распознать выбранный номер. Обновите страницу и попробуйте снова.");
+  const siteInventory = await scanSiteInventory(site, fetch, { maxPages: site.scope === "site" ? 40 : 1 });
+  const matches = (siteInventory.phoneCandidates || []).filter((item) =>
+    item.originalDigits === originalDigits && item.blockId === blockId && item.source === source && item.pagePath === pagePath
+  );
+  const candidate = matches.find((item) => item.occurrenceIndex === requestedIndex) || matches[0];
+  if (!candidate) fail("Этот номер больше не найден на опубликованной странице — возможно, сайт обновился. Попробуйте выбрать заново.", 409, "PHONE_CHANGED");
+  const group = { phone: candidate.phone, digits: candidate.originalDigits, candidates: [candidate] };
+  const conversation = await conversationForSite(env, user, site);
+  const place = candidate.locationLabel || candidate.sectionLabel || candidate.pageTitle || pagePath;
+  await appendConversationMessage(env, conversation.conversation_id, {
+    authorType: "client",
+    authorUserId: user.user_id,
+    content: `Выбрано на сайте: ${candidate.phone} (${place})`
+  });
+  const result = phoneValueQuestion(group, candidate, "element");
+  await appendConversationMessage(env, conversation.conversation_id, {
+    authorType: "ai",
+    content: result.message,
+    metadata: result
+  });
+  await audit(env, user, site.account_id, "assistant.locate", "site", siteId, "выбор номера кликом на сайте");
+  return json({
+    ok: true,
+    ...result,
+    conversation: clientConversation(await conversationSnapshot(env, conversation.conversation_id))
+  });
+}
+
 async function applyPreparedChange(request, env, user, siteId) {
   const { site } = await siteAccess(env, user, siteId, "manager");
   await requireLoaderConnection(env, site);
@@ -1505,9 +1543,10 @@ async function applyPreparedChange(request, env, user, siteId) {
   if (kind === "phone") {
     const requestedTarget = safeText(body.targetPhone, 80);
     const phoneCandidateId = safeText(body.phoneCandidateId || body.candidateId, 120);
-    // A business phone is one setting: by default replace the selected number
-    // everywhere on the connected site, including duplicated mobile blocks.
-    const scope = "site";
+    // A specific location can be targeted explicitly (e.g. selected by clicking
+    // it on the live site). Without an explicit choice, a business phone is
+    // still treated as one setting and replaced everywhere on the site.
+    const scope = new Set(["element", "page", "site"]).has(String(body.scope)) ? String(body.scope) : "site";
     if (phoneCandidateId && !phoneCandidateId.startsWith("legacy_phone_")) {
       const [siteInventory, legacyRulesResult, targetRulesResult] = await Promise.all([
         scanSiteInventory(site, fetch, { maxPages: site.scope === "site" ? 40 : 1 }),
@@ -2687,10 +2726,11 @@ export async function handlePlatformRoute(request, env, path) {
     if (request.method === "GET" && match[2] === "conversation") return conversationState(env, user, match[1]);
     if (request.method === "POST" && match[2] === "support") return siteSupportAction(request, env, user, match[1]);
   }
-  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(inventory|assistant|changes\/apply)$/u.exec(path);
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(inventory|assistant|assistant\/locate-phone|changes\/apply)$/u.exec(path);
   if (match) {
     if ((request.method === "GET" || request.method === "POST") && match[2] === "inventory") return inventory(request, env, user, match[1]);
     if (request.method === "POST" && match[2] === "assistant") return assistantProposal(request, env, user, match[1]);
+    if (request.method === "POST" && match[2] === "assistant/locate-phone") return assistantLocatePhone(request, env, user, match[1]);
     if (request.method === "POST" && match[2] === "changes/apply") return applyPreparedChange(request, env, user, match[1]);
   }
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/telegram\/(status|connect|test|disconnect)$/u.exec(path);

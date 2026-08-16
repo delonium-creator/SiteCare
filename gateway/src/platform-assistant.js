@@ -230,7 +230,7 @@ function phoneChange(group, candidate, value, scope = "element") {
   });
 }
 
-function phoneValueQuestion(group, candidate, scope = "element") {
+export function phoneValueQuestion(group, candidate, scope = "element") {
   const place = scope === "site" ? "во всех местах сайта" : candidate?.locationLabel || candidate?.sectionLabel || candidate?.pageTitle || "в выбранном месте";
   return assistantResult({
     message: `На какой новый номер заменить ${group.phone} ${place}?`,
@@ -325,8 +325,12 @@ function continueDialog(prompt, inventory, dialog) {
       const value = phoneValue(prompt);
       if (!value) return assistantResult({ message: "Напишите новый номер полностью, например +7 999 123-45-67.", targetPhone: dialog.targetPhone, dialog });
       const group = groups.find((item) => item.digits === digits(dialog.targetPhone)) || { phone: dialog.targetPhone, candidates: [] };
-      const candidate = group.candidates.find((item) => item.candidateId === dialog.candidateId) || group.candidates[0];
-      return phoneChange(group, candidate, value, "site");
+      const matched = group.candidates.find((item) => item.candidateId === dialog.candidateId);
+      const candidate = matched || group.candidates[0];
+      // A precisely selected location (e.g. clicked on the live site) keeps its
+      // exact scope; if the original candidate can no longer be matched (the
+      // page changed), fall back to the safe site-wide replacement.
+      return phoneChange(group, candidate, value, matched ? (dialog.scope || "element") : "site");
     }
   }
   if (dialog.intent === "button") {
