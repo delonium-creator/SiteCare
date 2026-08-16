@@ -25,7 +25,7 @@
     {
       "binding": "GATEWAY_DB",
       "database_name": "sitecare-telegram-gateway-db",
-      "database_id": "PUT_GATEWAY_DATABASE_ID_HERE",
+      "database_id": "4b2adca1-16df-43ae-8d46-51a4456593e5",
       "migrations_dir": "migrations"
     }
   ]

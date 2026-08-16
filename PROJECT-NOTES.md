@@ -50,10 +50,15 @@ Workflow-файл `.github/workflows/ci-cd.yml` уже подготовлен (�
 Что нужно сделать один раз (руками, на GitHub и Cloudflare), чтобы деплой стал полностью
 автоматическим и больше не требовал ни компьютера, ни ручного `wrangler`:
 
-- [ ] Перенести `.github/workflows/ci-cd.yml` на GitHub
-- [ ] Создать реальные D1-базы на Cloudflare (`wrangler d1 create ...` или через дашборд)
-      и вписать их id вместо заглушек в `wrangler.jsonc` и `gateway/wrangler.jsonc`
-      (поля `PUT_DATABASE_ID_HERE` / `PUT_GATEWAY_DATABASE_ID_HERE`)
+- [x] Перенести `.github/workflows/ci-cd.yml` на GitHub — файл лежал в корне репозитория
+      и не подхватывался Actions; перенесён в `.github/workflows/ci-cd.yml` (2026-08-16).
+- [x] Создать реальные D1-базы на Cloudflare и вписать их id вместо заглушек —
+      оба id уже были созданы (`cdf0bcc2...` для основной БД, `4b2adca1...` для gateway),
+      но после ручной загрузки файлов через веб-интерфейс GitHub перепутались местами:
+      конфиг шлюза оказался в корневом `wrangler.jsonc` вместо основного воркера,
+      а основной конфиг — в лишнем файле `wrangler (1).jsonc`. Разобрано и исправлено
+      (2026-08-16): корневой `wrangler.jsonc` снова содержит конфиг основного воркера,
+      `gateway/wrangler.jsonc` — конфиг шлюза с реальным id вместо `PUT_GATEWAY_DATABASE_ID_HERE`.
 - [ ] В настройках репозитория GitHub → Settings → Secrets and variables → Actions
       добавить 4 секрета: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
       `OPENAI_API_KEY`, `TELEGRAM_BOT_TOKEN` (вводить прямо на GitHub, не в чат)
