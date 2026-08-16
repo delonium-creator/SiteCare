@@ -115,9 +115,9 @@ export function platformHtml(nonce) {
     .chat-bubble:hover{transform:scale(1.06)}
     .chat-bubble.is-open{transform:scale(0);opacity:0;pointer-events:none}
     .chat-bubble img{width:34px;height:34px;object-fit:contain}
-    .chat-widget{position:fixed;right:26px;bottom:26px;width:min(400px,calc(100vw - 40px));height:min(600px,calc(100vh - 60px));background:#fff;border-radius:20px;box-shadow:0 24px 60px rgba(24,20,50,.22);display:flex;flex-direction:column;overflow:hidden;z-index:900;border:1px solid #e7e5ef;transform-origin:bottom right;transition:transform .32s cubic-bezier(.34,1.4,.64,1),opacity .22s ease,width .22s ease,height .22s ease}
+    .chat-widget{position:fixed;right:26px;bottom:26px;width:min(400px,calc(100vw - 40px));height:auto;max-height:min(600px,calc(100vh - 60px));background:#fff;border-radius:20px;box-shadow:0 24px 60px rgba(24,20,50,.22);display:flex;flex-direction:column;overflow:hidden;z-index:900;border:1px solid #e7e5ef;transform-origin:bottom right;transition:transform .32s cubic-bezier(.34,1.4,.64,1),opacity .22s ease,width .22s ease,max-height .22s ease}
     .chat-widget.hidden{display:flex;transform:scale(.3) translate(10px,10px);opacity:0;pointer-events:none}
-    .chat-widget.expanded{width:min(920px,calc(100vw - 40px));height:min(860px,calc(100vh - 60px))}
+    .chat-widget.expanded{width:min(920px,calc(100vw - 40px));max-height:min(860px,calc(100vh - 60px))}
     .chat-widget-head{display:flex;align-items:center;gap:11px;padding:13px 14px;background:linear-gradient(135deg,#6753e6,#8465ec);flex:0 0 auto}
     .chat-widget-head .bot{width:36px;height:36px;flex:0 0 36px;border-radius:50%;overflow:hidden;background:rgba(255,255,255,.16);display:grid;place-items:center}
     .chat-widget-head .bot img{width:24px;height:24px;object-fit:contain}
@@ -130,7 +130,7 @@ export function platformHtml(nonce) {
     .chat-widget-expand:hover,.chat-widget-close:hover{background:rgba(255,255,255,.32)}
     .chat-widget .editor-chat-panel{margin:0;border:0;border-radius:0;box-shadow:none;background:#fff;flex:1;min-height:0;display:flex;flex-direction:column;padding:0}
     .chat-widget .chat-panel-head{display:none}
-    .chat-widget .assistant-chat{flex:1;max-height:none}
+    .chat-widget .assistant-chat{flex:1;min-height:0;max-height:none;overflow-y:auto}
     .chat-widget .chat-suggestions{flex-wrap:nowrap;overflow-x:auto;padding:8px 14px 0;gap:6px}
     .chat-widget .chat-suggestions button{flex:0 0 auto;white-space:nowrap;font-size:11px;padding:6px 10px;min-height:auto}
     .chat-widget .chat-composer{margin:10px 14px 12px}
@@ -223,7 +223,8 @@ export function platformHtml(nonce) {
     function chatTime(value){if(!value)return'';try{return new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(new Date(value))}catch{return''}}
     function messageText(value){return h(value).replace(/\\n/gu,'<br>')}
     function conversationMessages(conversation,compact=false){let rows=(conversation?.messages||[]).filter(row=>row.role!=='system');if(!rows.length&&!compact)rows=[{role:'ai',authorName:'Помощник SiteCare',content:'Здравствуйте! Я уже знаю, какой сайт подключён к кабинету. Могу проверить его состояние, объяснить найденные проблемы, ответить на вопросы по SEO и подготовить безопасное изменение.',createdAt:null,synthetic:true}];if(!rows.length)return'<div class="support-thread">'+empty('Сообщений пока нет.')+'</div>';return'<div class="'+(compact?'support-thread':'assistant-chat')+'" role="log" aria-live="polite">'+rows.map(row=>{const role=['client','ai','support'].includes(row.role)?row.role:'ai',author=role==='support'?'Поддержка SiteCare':role==='ai'?'Помощник SiteCare':'Вы',avatar=role==='ai'?'<img src="/sitecare-assistant.png" alt="">':role==='support'?'SC':h(initials(state?.user?.display_name||'Вы'));return'<article class="chat-message '+role+'"><div class="chat-avatar">'+avatar+'</div><div class="chat-message-body"><div class="chat-meta"><b>'+h(author)+'</b>'+(row.createdAt?'<time>'+h(chatTime(row.createdAt))+'</time>':'')+'</div><div class="chat-line '+role+'"><span>'+messageText(row.content)+'</span></div></div></article>'}).join('')+'<div class="chat-typing hidden" id="chatTyping"><div class="chat-avatar"><img src="/sitecare-assistant.png" alt=""></div><div><b>Помощник анализирует сайт</b><span><i></i><i></i><i></i></span></div></div></div>'}
-    function assistantSuggestions(conversation){const rows=(conversation?.messages||[]).filter(row=>row.role==='ai'&&Array.isArray(row.metadata?.suggestions));const suggested=rows.at(-1)?.metadata?.suggestions||[];const defaults=['Проверь состояние сайта','Проведи SEO-диагностику','Что можно улучшить?','Почему могут не приходить заявки?'];return(suggested.length?suggested:defaults).slice(0,4).map(text=>'<button type="button" data-prompt-example="'+h(text)+'">'+h(text)+'</button>').join('')}
+    const QUICK_ACTIONS={'Проверь состояние сайта':'quick-check','Проведи SEO-диагностику':'quick-seo','Что можно улучшить?':'quick-improve','Почему могут не приходить заявки?':'quick-leads'};
+    function assistantSuggestions(conversation){const rows=(conversation?.messages||[]).filter(row=>row.role==='ai'&&Array.isArray(row.metadata?.suggestions));const suggested=rows.at(-1)?.metadata?.suggestions||[];const defaults=Object.keys(QUICK_ACTIONS);return(suggested.length?suggested:defaults).slice(0,4).map(text=>{const quick=QUICK_ACTIONS[text];return quick?'<button type="button" data-editor-action="'+quick+'">'+h(text)+'</button>':'<button type="button" data-prompt-example="'+h(text)+'">'+h(text)+'</button>'}).join('')}
     function accountFeature(a,key){return a?.features?.[key]||{key,status:'canceled',label:'Не подключён',enabled:false,currentPeriodEnd:null}}
     function hasFeature(a,key){return Boolean(accountFeature(a,key).enabled)}
     function catalogProduct(key){return state?.products?.find(x=>x.productKey===key)||null}
@@ -344,7 +345,7 @@ export function platformHtml(nonce) {
       const choiceRows=!supportRequest&&editorProposal?.type==='clarification'&&(editorProposal.candidates||[]).length?'<div class="editor-choice-list">'+(editorProposal.candidates||[]).map((candidate,index)=>{const phone=Boolean(candidate.phone),title=phone?(editorProposal.allowAll?(candidate.locationLabel||candidate.sectionLabel||candidate.pageTitle):candidate.phone):(candidate.text||'Кнопка без текста'),detail=phone?(editorProposal.allowAll?[(candidate.pageTitle||candidate.pagePath),(candidate.context||'')].filter(Boolean).join(' · '):candidate.occurrenceCount>1?'Найдено мест: '+candidate.occurrenceCount:(candidate.locationLabel||candidate.sectionLabel||candidate.pageTitle)):[candidate.locationLabel||candidate.sectionLabel,candidate.pageTitle||candidate.pagePath].filter(Boolean).join(' · ');return'<button class="editor-choice" data-editor-action="reply-choice" data-reply="'+(index+1)+'"><i>'+(index+1)+'</i><span><b>'+h(title)+'</b><span>'+h(detail)+'</span></span><small>Выбрать</small></button>'}).join('')+(editorProposal.allowAll?'<button class="editor-choice editor-choice-all" data-editor-action="reply-choice" data-reply="во всех местах"><i>∞</i><span><b>Во всех местах</b><span>Изменить этот номер везде на сайте</span></span><small>Выбрать</small></button>':'')+'</div>'+(choiceIsPhone?'<button class="ghost select-on-site" type="button" data-editor-action="select-on-site" data-select-kind="phone">Выбрать прямо на сайте</button>':''):'';
       const assistant='<section class="card editor-chat-panel"><header class="chat-panel-head"><div class="chat-identity"><div class="bot"><img src="/sitecare-assistant.png" alt="Помощник SiteCare"></div><div><span class="eyebrow">Личный технический помощник</span><h1>'+(supportRequest?'Диалог со специалистом':'Чем помочь с сайтом?')+'</h1><p>'+(supportRequest?'Продолжайте диалог здесь — специалист видит историю задачи.':'Спросите о состоянии, SEO или проблеме. Безопасные правки я сначала покажу и попрошу подтвердить.')+'</p></div></div><div class="chat-presence"><i></i><span>'+h(supportRequest?'Поддержка подключена':state.assistant?.label||'AI-помощник')+'</span></div></header>'+chatMarkup+choiceRows+proposalMarkup(o)+'<div class="chat-suggestions">'+assistantSuggestions(conversation)+'</div><div class="prompt chat-composer"><textarea id="changePromptV45" aria-label="Сообщение" rows="1" placeholder="'+(supportRequest?'Напишите сообщение специалисту':'Задайте вопрос о сайте или опишите задачу')+'" '+(!chatEnabled?'disabled':'')+'>'+h(draft)+'</textarea><button class="primary chat-send" type="button" aria-label="Отправить сообщение" data-editor-action="prepare" '+(!chatEnabled?'disabled':'')+'><span>Отправить</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 12 16-8-5 16-3-6-8-2Z"/><path d="m12 14 8-10"/></svg></button></div><div class="composer-hint">Enter — отправить · Shift+Enter — новая строка</div>'+(!chatEnabled?'<div class="editor-disabled">Сайт недоступен для анализа. Проверьте раздел «Диагностика» или передайте задачу поддержке.</div>':'')+supportStrip+'</section>';
       $('chatWidget').innerHTML=head+assistant;
-      const box=$('chatWidget').querySelector('.assistant-chat');if(box)box.scrollTop=box.scrollHeight;
+      requestAnimationFrame(()=>{requestAnimationFrame(()=>{const box=$('chatWidget').querySelector('.assistant-chat');if(box)box.scrollTop=box.scrollHeight})});
     }
 
     function proposalMarkup(o){
@@ -513,7 +514,51 @@ export function platformHtml(nonce) {
       toast('Изменение сохранено, но сайт ещё не подтвердил результат. Откройте опубликованную страницу и обновите её.');
     }
 
+    function injectQuickAnswer(userText,aiText){
+      const s=site();if(!s)return;
+      if(!s._conversation)s._conversation={messages:[],supportRequest:null};
+      const now=new Date().toISOString();
+      s._conversation.messages=[...(s._conversation.messages||[]),{role:'client',content:userText,createdAt:now},{role:'ai',content:aiText,createdAt:now}];
+      s._conversation.updatedAt=now;
+      render();
+    }
+    async function handleQuickAction(kind,button){
+      const s=site();if(!s)return;
+      try{
+        busy(button,true);
+        if(kind==='quick-check'){
+          const result=await api('/v1/platform/sites/'+encodeURIComponent(siteId)+'/check',{method:'POST',body:'{}'});
+          s.page_ok=result.pageOk?1:0;
+          s.tls_ok=result.tlsOk?1:0;
+          if(result.loaderOk!==null&&result.loaderOk!==undefined)s.loader_ok=result.loaderOk?1:0;
+          const webhookReady=!Number(s.form_required)||(Boolean(s.webhook_verified_at)&&Boolean(s.form_verified_at));
+          const parts=[
+            result.pageOk?'сайт открывается':'сайт сейчас не открывается',
+            webhookReady?'заявки подключены':'приём заявок ещё не настроен',
+            s.telegram_enabled?'Telegram подключён':'Telegram не подключён'
+          ];
+          injectQuickAnswer('Проверь состояние сайта','Проверил: '+parts.join(', ')+'.');
+          return;
+        }
+        const inv=await api('/v1/platform/sites/'+encodeURIComponent(siteId)+'/inventory');
+        editorInventory={...(editorInventory||{}),...inv};
+        if(kind==='quick-seo'){
+          const issues=(inv.diagnostics?.issues||[]).filter(item=>item.category==='seo');
+          const text=issues.length?('Нашёл '+issues.length+' SEO-'+(issues.length===1?'замечание':issues.length<5?'замечания':'замечаний')+': '+issues.slice(0,5).map(item=>item.title).join('; ')+'.'):'SEO-замечаний не найдено — с этой стороны сайт в порядке.';
+          injectQuickAnswer('Проведи SEO-диагностику',text);
+        }else if(kind==='quick-improve'){
+          const issues=inv.diagnostics?.issues||[];
+          const text=issues.length?('Стоит поправить: '+issues.slice(0,5).map(item=>item.title).join('; ')+(issues.length>5?'.':'.')):'Критических замечаний не нашёл — сайт в порядке.';
+          injectQuickAnswer('Что можно улучшить?',text);
+        }else if(kind==='quick-leads'){
+          const webhookReady=!Number(s.form_required)||(Boolean(s.webhook_verified_at)&&Boolean(s.form_verified_at));
+          const text=webhookReady?'Приём заявок подключён и подтверждён — технических причин для сбоя не вижу. Если заявки всё равно не приходят, проверьте, что форма опубликована на сайте и её адрес не менялся.':(Number(s.form_required)?'Приём заявок ещё не подтверждён — нужно проверить Webhook формы в настройках подключения.':'На подключённой странице пока не найдена обязательная форма заявки.');
+          injectQuickAnswer('Почему могут не приходить заявки?',text);
+        }
+      }catch(err){toast(err.message)}finally{busy(button,false)}
+    }
     async function handleEditorAction(action,button){
+      if(action.startsWith('quick-'))return handleQuickAction(action,button);
       if(action==='prepare')return prepareEditorChange(button);
       if(action==='reply-choice'){const field=$('changePromptV45');if(!field)return;field.value=button.dataset.reply||'';field.dispatchEvent(new Event('input',{bubbles:true}));return prepareEditorChange(button)}
       if(action==='select-on-site')return openSiteSelector(button.dataset.selectKind||'phone');
