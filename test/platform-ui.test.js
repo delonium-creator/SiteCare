@@ -66,7 +66,7 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /data-action="telegram-dialog"/u);
   assert.doesNotMatch(html, /data-view="client-notifications"/u);
   assert.doesNotMatch(html, /Последние события|Быстрые действия/u);
-  assert.match(html, /Проверки, понятные причины и помощь с сайтом — в одном окне/u);
+  assert.match(html, /Проверки и понятные причины — открытые вопросы решает помощник в чате справа/u);
   assert.match(html, /data-feature="reviews"/u);
   assert.match(html, /Посмотреть как клиент/u);
   assert.match(html, /прокрутите <b>в самый конец<\/b>/u);
@@ -77,7 +77,10 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /Заявки с форм ещё не подключены/u);
   assert.doesNotMatch(html, /id="backButton"/u);
   assert.match(html, /id="sidebarToggle"/u);
-  assert.match(html, /class="editor-layout"/u);
+  assert.match(html, /class="editor-stack diagnostics-only"/u);
+  assert.match(html, /class="card editor-chat-panel"/u);
+  assert.match(html, /id="chatBubble"/u);
+  assert.match(html, /id="chatWidget"/u);
   assert.match(html, /Состояние сайта/u);
   assert.match(html, /HTTPS-сертификат не подтверждён/u);
   assert.match(html, /Код SiteCare не найден/u);
