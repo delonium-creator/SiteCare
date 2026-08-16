@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sitecare-ketedes-page169452909",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-04",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    "SITE_ID": "ketedes-page169452909",
+    "ALLOWED_ORIGIN": "https://ketedes.tilda.ws",
+    "ALLOWED_HOSTNAME": "ketedes.tilda.ws",
+    "ALLOWED_PATH": "/page169452909.html",
+    "SESSION_HOURS": "12",
+    "TELEGRAM_GATEWAY_URL": "https://sitecare-telegram-gateway.sitecare-b6daa85b.workers.dev"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sitecare-ketedes-page169452909-db",
+      "database_id": "cdf0bcc2-3a79-4f1e-9bad-45b2521c89f6",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/30 * * * *"]
+  }
+}

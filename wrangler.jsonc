@@ -1,6 +1,6 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sitecare-ketedes-page169452909",
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "sitecare-telegram-gateway",
   "main": "src/index.js",
   "compatibility_date": "2026-08-04",
   "workers_dev": true,
@@ -11,23 +11,22 @@
   "ai": {
     "binding": "AI"
   },
+  "assets": {
+    "directory": "./public"
+  },
   "vars": {
-    "SITE_ID": "ketedes-page169452909",
-    "ALLOWED_ORIGIN": "https://ketedes.tilda.ws",
-    "ALLOWED_HOSTNAME": "ketedes.tilda.ws",
-    "ALLOWED_PATH": "/page169452909.html",
-    "SESSION_HOURS": "12",
-    "TELEGRAM_GATEWAY_URL": "https://PUT-YOUR-GATEWAY.workers.dev"
+    "CONNECT_TTL_MINUTES": "15",
+    "OPENAI_MODEL": "gpt-5-mini"
+  },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
   },
   "d1_databases": [
     {
-      "binding": "DB",
-      "database_name": "sitecare-ketedes-page169452909-db",
-      "database_id": "PUT_DATABASE_ID_HERE",
+      "binding": "GATEWAY_DB",
+      "database_name": "sitecare-telegram-gateway-db",
+      "database_id": "4b2adca1-16df-43ae-8d46-51a4456593e5",
       "migrations_dir": "migrations"
     }
-  ],
-  "triggers": {
-    "crons": ["*/30 * * * *"]
-  }
+  ]
 }
