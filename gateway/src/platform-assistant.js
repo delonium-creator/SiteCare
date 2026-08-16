@@ -524,9 +524,10 @@ export async function prepareSiteChange({ prompt: rawPrompt, inventory, ai, open
         };
       }
       if (proposal) return proposal;
-    } catch {
+    } catch (error) {
       // The deterministic layer and the optional Workers AI binding keep the
       // cabinet useful during a temporary provider outage.
+      console.error("openai_assistant_failed", error?.message || error, error?.status || "", error?.requestId || "");
     }
   }
   if (ai && typeof ai.run === "function") {
