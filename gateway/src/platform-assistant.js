@@ -311,19 +311,24 @@ function continueDialog(prompt, inventory, dialog) {
     const groups = phoneGroups(inventory);
     if (dialog.stage === "target") {
       const group = choosePhoneGroup(prompt, groups);
-      if (!group) return phoneQuestion(inventory, dialog.pendingValue || "");
+      // An unparsed reply here almost always means the client moved on to a
+      // different question rather than mistyped a phone selection -- forcing
+      // the same clarification back at them is how the assistant gets stuck.
+      // Falling through (null) lets the fresh-request pipeline answer what
+      // was actually asked instead.
+      if (!group) return null;
       return phoneLocationQuestion(group, dialog.pendingValue || "");
     }
     if (dialog.stage === "location") {
       const group = groups.find((item) => item.digits === digits(dialog.targetPhone));
-      if (!group) return phoneQuestion(inventory, dialog.pendingValue || "");
+      if (!group) return null;
       return dialog.pendingValue
         ? phoneChange(group, group.candidates[0], dialog.pendingValue, "site")
         : phoneValueQuestion(group, group.candidates[0], "site");
     }
     if (dialog.stage === "value") {
       const value = phoneValue(prompt);
-      if (!value) return assistantResult({ message: "Напишите новый номер полностью, например +7 999 123-45-67.", targetPhone: dialog.targetPhone, dialog });
+      if (!value) return null;
       const group = groups.find((item) => item.digits === digits(dialog.targetPhone)) || { phone: dialog.targetPhone, candidates: [] };
       const matched = group.candidates.find((item) => item.candidateId === dialog.candidateId);
       const candidate = matched || group.candidates[0];
@@ -348,14 +353,14 @@ function continueDialog(prompt, inventory, dialog) {
     if (dialog.stage === "attribute") {
       const wantsUrl = /ссылк|адрес|переход|куда\s+вед/iu.test(prompt);
       const wantsText = /текст|надпис|назван|слово/iu.test(prompt);
-      if (!wantsUrl && !wantsText) return assistantResult({ message: "Что именно изменить: текст кнопки или ссылку, по которой она открывается?", targetHint: dialog.targetHint, dialog });
+      if (!wantsUrl && !wantsText) return null;
       return buttonValueQuestion(wantsUrl ? "button_url" : "button_text", dialog.targetHint, dialog.candidateId);
     }
     if (dialog.stage === "value") {
       const candidate = (inventory?.candidates || []).find((item) => item.candidateId === dialog.candidateId);
-      if (!candidate) return assistantResult({ message: "Кнопка изменилась на опубликованном сайте. Напишите её текущий текст ещё раз.", dialog: { intent: "button", stage: "target" } });
+      if (!candidate) return null;
       const value = dialog.kind === "button_url" ? absoluteUrl(prompt) : compact(prompt).replace(/^(?:поставь|замени|измени)(?:\s+на)?\s+/iu, "").replace(/[«»"]+/gu, "").slice(0, 180);
-      if (!value) return buttonValueQuestion(dialog.kind, dialog.targetHint, dialog.candidateId);
+      if (!value) return null;
       return assistantResult({ type: "change", kind: dialog.kind, value, targetHint: dialog.targetHint, message: `Изменить ${buttonDescription(candidate)}?`, candidates: [candidate], selectedCandidateId: candidate.candidateId });
     }
   }

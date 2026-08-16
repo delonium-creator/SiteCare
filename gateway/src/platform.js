@@ -2408,6 +2408,48 @@ async function runtimeApplied(request, env, siteId) {
   return json({ ok: true }, 200, corsForSite(origin));
 }
 
+async function reportSiteSelection(request, env, siteId) {
+  if (!SITE_ID_PATTERN.test(siteId)) fail("Конфигурация не найдена.", 404, "NOT_FOUND");
+  const site = await env.GATEWAY_DB.prepare("SELECT site_id, target_origin, loader_key FROM platform_sites WHERE site_id = ?").bind(siteId).first();
+  const key = new URL(request.url).searchParams.get("key") || "";
+  if (!site || !constantTimeEqual(key, site.loader_key)) fail("Конфигурация не найдена.", 404, "NOT_FOUND");
+  const origin = request.headers.get("Origin") || "";
+  if (!origin || origin !== site.target_origin) fail("Страница не входит в подключённый сайт.", 403, "ORIGIN_REJECTED");
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: securityHeaders(corsForSite(origin)) });
+  const raw = await request.text();
+  if (encoder.encode(raw).byteLength > 2 * 1024) fail("Слишком большой запрос.", 413, "PAYLOAD_TOO_LARGE");
+  let body;
+  try { body = JSON.parse(raw); } catch { fail("Некорректные данные."); }
+  if (body?.kind !== "phone") fail("Неподдерживаемый тип выбора.");
+  const digits = String(body?.originalDigits || "").replace(/\D/gu, "");
+  if (digits.length < 10 || digits.length > 15) fail("Не удалось распознать номер.");
+  const payload = {
+    kind: "phone",
+    pagePath: safeText(body.pagePath, 300) || "/",
+    blockId: safeText(body.blockId, 60),
+    source: body.source === "link" ? "link" : "text",
+    occurrenceIndex: Number.isFinite(Number(body.occurrenceIndex)) ? Number(body.occurrenceIndex) : 0,
+    originalDigits: digits,
+    phone: safeText(body.phone, 60)
+  };
+  await env.GATEWAY_DB.prepare(
+    "INSERT INTO platform_pending_selections (site_id, payload, created_at) VALUES (?, ?, ?) ON CONFLICT(site_id) DO UPDATE SET payload = excluded.payload, created_at = excluded.created_at"
+  ).bind(siteId, JSON.stringify(payload), new Date().toISOString()).run();
+  return json({ ok: true }, 200, corsForSite(origin));
+}
+
+async function siteSelectionResult(env, user, siteId) {
+  const { site } = await siteAccess(env, user, siteId, "viewer");
+  const row = await env.GATEWAY_DB.prepare("SELECT payload, created_at FROM platform_pending_selections WHERE site_id = ?").bind(site.site_id).first();
+  if (!row) return json({ ok: true, selection: null });
+  await env.GATEWAY_DB.prepare("DELETE FROM platform_pending_selections WHERE site_id = ?").bind(site.site_id).run();
+  const freshEnoughMs = 10 * 60 * 1000;
+  if (Date.now() - Date.parse(row.created_at) > freshEnoughMs) return json({ ok: true, selection: null });
+  let payload = null;
+  try { payload = JSON.parse(row.payload); } catch { payload = null; }
+  return json({ ok: true, selection: payload });
+}
+
 async function telegramStatus(env, user, siteId) {
   await siteAccess(env, user, siteId, "viewer");
   const row = await env.GATEWAY_DB.prepare("SELECT chat_type, linked_at, enabled FROM telegram_destinations WHERE site_id = ?").bind(siteId).first();
@@ -2643,6 +2685,8 @@ export async function handlePlatformRoute(request, env, path) {
   if (request.method === "GET" && match) return publicConfig(request, env, match[1]);
   match = /^\/v1\/public\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/applied$/u.exec(path);
   if ((request.method === "POST" || request.method === "OPTIONS") && match) return runtimeApplied(request, env, match[1]);
+  match = /^\/v1\/public\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/select$/u.exec(path);
+  if ((request.method === "POST" || request.method === "OPTIONS") && match) return reportSiteSelection(request, env, match[1]);
 
   if (!path.startsWith("/v1/platform/")) return null;
   const csrf = request.method !== "GET" && request.method !== "HEAD";
@@ -2726,11 +2770,12 @@ export async function handlePlatformRoute(request, env, path) {
     if (request.method === "GET" && match[2] === "conversation") return conversationState(env, user, match[1]);
     if (request.method === "POST" && match[2] === "support") return siteSupportAction(request, env, user, match[1]);
   }
-  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(inventory|assistant|assistant\/locate-phone|changes\/apply)$/u.exec(path);
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(inventory|assistant|assistant\/locate-phone|selection|changes\/apply)$/u.exec(path);
   if (match) {
     if ((request.method === "GET" || request.method === "POST") && match[2] === "inventory") return inventory(request, env, user, match[1]);
     if (request.method === "POST" && match[2] === "assistant") return assistantProposal(request, env, user, match[1]);
     if (request.method === "POST" && match[2] === "assistant/locate-phone") return assistantLocatePhone(request, env, user, match[1]);
+    if (request.method === "GET" && match[2] === "selection") return siteSelectionResult(env, user, match[1]);
     if (request.method === "POST" && match[2] === "changes/apply") return applyPreparedChange(request, env, user, match[1]);
   }
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/telegram\/(status|connect|test|disconnect)$/u.exec(path);

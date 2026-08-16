@@ -704,7 +704,9 @@ function sitecareLoaderRuntime(replacePhoneText, makePhoneHref, replaceScheduleT
     document.head?.appendChild(style);
     const banner = document.createElement("div");
     banner.setAttribute("data-sitecare-ignore", "");
-    banner.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#171b25;color:#fff;padding:12px 16px;font:600 14px/1.4 -apple-system,'Segoe UI',sans-serif;text-align:center;box-shadow:0 4px 14px rgba(0,0,0,.25)";
+    // Anchored at the bottom, not top:0 -- a full-width bar at the top would
+    // otherwise sit directly over the site's own header/nav on most layouts.
+    banner.style.cssText = "position:fixed;left:50%;bottom:20px;transform:translateX(-50%);max-width:calc(100vw - 32px);z-index:2147483647;background:#171b25;color:#fff;padding:12px 20px;border-radius:999px;font:600 14px/1.4 -apple-system,'Segoe UI',sans-serif;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
     banner.textContent = candidates.length
       ? "SiteCare: кликните по нужному номеру телефона"
       : "SiteCare: на этой странице не нашлось номеров для выбора";
@@ -714,14 +716,30 @@ function sitecareLoaderRuntime(replacePhoneText, makePhoneHref, replaceScheduleT
     const finish = (payload) => {
       for (const item of candidates) item.element.classList.remove("sitecare-select-target");
       banner.textContent = "Готово — вернитесь во вкладку SiteCare.";
+      // window.opener/postMessage is a best-effort extra: many sites' own
+      // Cross-Origin-Opener-Policy silently severs window.opener for
+      // cross-origin popups, so the click is also reported to the gateway
+      // itself; the panel picks it up on its own when the tab regains focus.
       try {
         window.opener?.postMessage({ channel: "sitecare-select", ...payload }, base);
       } catch {
-        // A missing opener (e.g. the tab was opened manually) just leaves the banner visible.
+        // Ignored -- the server-reported copy below is the reliable path.
       }
-      window.setTimeout(() => {
-        try { window.close(); } catch {}
-      }, 900);
+      fetch(`${base}/v1/public/sites/${encodeURIComponent(id)}/select?key=${encodeURIComponent(key)}`, {
+        method: "POST",
+        mode: "cors",
+        credentials: "omit",
+        cache: "no-store",
+        referrerPolicy: "no-referrer",
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        body: JSON.stringify(payload)
+      }).catch(() => {
+        // The banner stays visible if this fails, which is the honest state.
+      }).finally(() => {
+        window.setTimeout(() => {
+          try { window.close(); } catch {}
+        }, 900);
+      });
     };
     document.addEventListener("click", (event) => {
       const match = candidates.find((item) => item.element === event.target || item.element.contains(event.target));

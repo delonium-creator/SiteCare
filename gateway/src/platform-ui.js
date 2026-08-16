@@ -115,19 +115,28 @@ export function platformHtml(nonce) {
     .chat-bubble:hover{transform:scale(1.06)}
     .chat-bubble.is-open{transform:scale(0);opacity:0;pointer-events:none}
     .chat-bubble img{width:34px;height:34px;object-fit:contain}
-    .chat-widget{position:fixed;right:26px;bottom:26px;width:min(400px,calc(100vw - 40px));height:min(600px,calc(100vh - 60px));background:#fff;border-radius:20px;box-shadow:0 24px 60px rgba(24,20,50,.22);display:flex;flex-direction:column;overflow:hidden;z-index:900;border:1px solid #e7e5ef;transform-origin:bottom right;transition:transform .18s ease,opacity .18s ease}
-    .chat-widget.hidden{display:flex;transform:scale(.85) translateY(14px);opacity:0;pointer-events:none}
+    .chat-widget{position:fixed;right:26px;bottom:26px;width:min(400px,calc(100vw - 40px));height:min(600px,calc(100vh - 60px));background:#fff;border-radius:20px;box-shadow:0 24px 60px rgba(24,20,50,.22);display:flex;flex-direction:column;overflow:hidden;z-index:900;border:1px solid #e7e5ef;transform-origin:bottom right;transition:transform .32s cubic-bezier(.34,1.4,.64,1),opacity .22s ease,width .22s ease,height .22s ease}
+    .chat-widget.hidden{display:flex;transform:scale(.3) translate(10px,10px);opacity:0;pointer-events:none}
+    .chat-widget.expanded{width:min(920px,calc(100vw - 40px));height:min(860px,calc(100vh - 60px))}
     .chat-widget-head{display:flex;align-items:center;gap:11px;padding:13px 14px;background:linear-gradient(135deg,#6753e6,#8465ec);flex:0 0 auto}
     .chat-widget-head .bot{width:36px;height:36px;flex:0 0 36px;border-radius:50%;overflow:hidden;background:rgba(255,255,255,.16);display:grid;place-items:center}
     .chat-widget-head .bot img{width:24px;height:24px;object-fit:contain}
     .chat-widget-head b{display:block;color:#fff;font-size:14px;font-weight:750}
     .chat-widget-head .presence{display:flex;align-items:center;gap:6px;margin-top:2px;color:rgba(255,255,255,.85);font-size:11px}
     .chat-widget-head .presence i{width:7px;height:7px;border-radius:50%;background:#5be08a;flex:0 0 auto}
-    .chat-widget-close{margin-left:auto;width:28px;height:28px;flex:0 0 auto;border:0;border-radius:50%;background:rgba(255,255,255,.18);color:#fff;display:grid;place-items:center;font-size:17px;line-height:1}
-    .chat-widget-close:hover{background:rgba(255,255,255,.32)}
+    .chat-widget-expand,.chat-widget-close{margin-left:auto;width:28px;height:28px;flex:0 0 auto;border:0;border-radius:50%;background:rgba(255,255,255,.18);color:#fff;display:grid;place-items:center;font-size:15px;line-height:1}
+    .chat-widget-expand{margin-left:auto}
+    .chat-widget-close{margin-left:6px;font-size:17px}
+    .chat-widget-expand:hover,.chat-widget-close:hover{background:rgba(255,255,255,.32)}
     .chat-widget .editor-chat-panel{margin:0;border:0;border-radius:0;box-shadow:none;background:#fff;flex:1;min-height:0;display:flex;flex-direction:column;padding:0}
     .chat-widget .chat-panel-head{display:none}
     .chat-widget .assistant-chat{flex:1;max-height:none}
+    .chat-widget .chat-suggestions{flex-wrap:nowrap;overflow-x:auto;padding:8px 14px 0;gap:6px}
+    .chat-widget .chat-suggestions button{flex:0 0 auto;white-space:nowrap;font-size:11px;padding:6px 10px;min-height:auto}
+    .chat-widget .chat-composer{margin:10px 14px 12px}
+    .chat-widget .chat-send{min-width:auto;padding:0 15px}
+    .chat-widget .chat-send span{display:none}
+    .chat-widget .composer-hint{display:none}
     @media(max-width:620px){.chat-widget{right:10px;left:10px;bottom:10px;width:auto;height:min(82vh,600px)}.chat-bubble{right:16px;bottom:16px}}
     @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
   </style>
@@ -181,7 +190,7 @@ export function platformHtml(nonce) {
   (()=>{
     'use strict';
     const initialParams=new URL(location.href).searchParams;
-    let state=null,csrf='',accountId='',siteId='',currentView='',operatorClientId='',dialogDirty=false,editorProposal=null,editorInventory=null,renderClientEdit=null,setupGuideMarkup=null,showSetupGuide=null,addSiteDialog=null,supportQueueData=null,supportSelectedId=initialParams.get('request')||'',supportDetails=null,supportTelegramData=null,supportQueueLoading=false,conversationLoadingSite='',chatWidgetOpen=false,operatorPreviewAccountId=/^acc_[a-z0-9_-]{4,80}$/u.test(initialParams.get('preview')||'')?initialParams.get('preview'):'';
+    let state=null,csrf='',accountId='',siteId='',currentView='',operatorClientId='',dialogDirty=false,editorProposal=null,editorInventory=null,renderClientEdit=null,setupGuideMarkup=null,showSetupGuide=null,addSiteDialog=null,supportQueueData=null,supportSelectedId=initialParams.get('request')||'',supportDetails=null,supportTelegramData=null,supportQueueLoading=false,conversationLoadingSite='',chatWidgetOpen=false,chatWidgetExpanded=false,operatorPreviewAccountId=/^acc_[a-z0-9_-]{4,80}$/u.test(initialParams.get('preview')||'')?initialParams.get('preview'):'';
     const $=id=>document.getElementById(id);
     const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     function supportTerminology(root){if(!root)return;const replacements=[[/Оператору SiteCare/gu,'В поддержку SiteCare'],[/оператору SiteCare/gu,'в поддержку SiteCare'],[/Оператор SiteCare/gu,'Поддержка SiteCare'],[/оператором/gu,'поддержкой'],[/оператору/gu,'поддержке'],[/оператор/gu,'поддержка'],[/Оператор/gu,'Поддержка']];const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let node;while((node=walker.nextNode())){let value=node.nodeValue;for(const [pattern,next] of replacements)value=value.replace(pattern,next);if(value!==node.nodeValue)node.nodeValue=value}}
@@ -316,9 +325,10 @@ export function platformHtml(nonce) {
       $('chatBubble').classList.toggle('is-open',eligible&&chatWidgetOpen);
       $('chatBubble').setAttribute('aria-expanded',String(chatWidgetOpen));
       $('chatWidget').classList.toggle('hidden',!eligible||!chatWidgetOpen);
+      $('chatWidget').classList.toggle('expanded',chatWidgetExpanded);
       if(!eligible||!chatWidgetOpen)return;
       const supportRequestNow=s._conversation?.supportRequest;
-      const head='<div class="chat-widget-head"><div class="bot"><img src="/sitecare-assistant.png" alt=""></div><div><b>'+(supportRequestNow?'Диалог со специалистом':'Помощник SiteCare')+'</b><span class="presence"><i></i>'+(supportRequestNow?'Поддержка подключена':h(state.assistant?.label||'AI-помощник')+' на связи')+'</span></div><button class="chat-widget-close" type="button" data-editor-action="chat-widget-close" aria-label="Закрыть помощника">×</button></div>';
+      const head='<div class="chat-widget-head"><div class="bot"><img src="/sitecare-assistant.png" alt=""></div><div><b>'+(supportRequestNow?'Диалог со специалистом':'Помощник SiteCare')+'</b><span class="presence"><i></i>'+(supportRequestNow?'Поддержка подключена':h(state.assistant?.label||'AI-помощник')+' на связи')+'</span></div><button class="chat-widget-expand" type="button" data-editor-action="chat-widget-expand" aria-label="'+(chatWidgetExpanded?'Свернуть':'Развернуть')+' помощника">'+(chatWidgetExpanded?'⤡':'⤢')+'</button><button class="chat-widget-close" type="button" data-editor-action="chat-widget-close" aria-label="Закрыть помощника">×</button></div>';
       if(!s._overrides||s._conversation===undefined){
         $('chatWidget').innerHTML=head+'<div class="card" style="margin:0;border:0;box-shadow:none;height:100%;display:grid;align-content:center">'+empty('Открываю помощника…')+'</div>';
         if(s._conversation===undefined&&conversationLoadingSite!==s.site_id){conversationLoadingSite=s.site_id;api('/v1/platform/sites/'+encodeURIComponent(s.site_id)+'/conversation').then(data=>{s._conversation=data.conversation;conversationLoadingSite='';render()}).catch(err=>{conversationLoadingSite='';toast(err.message)})}
@@ -508,6 +518,7 @@ export function platformHtml(nonce) {
       if(action==='reply-choice'){const field=$('changePromptV45');if(!field)return;field.value=button.dataset.reply||'';field.dispatchEvent(new Event('input',{bubbles:true}));return prepareEditorChange(button)}
       if(action==='select-on-site')return openSiteSelector(button.dataset.selectKind||'phone');
       if(action==='chat-widget-close'){chatWidgetOpen=false;renderChatWidget();return}
+      if(action==='chat-widget-expand'){chatWidgetExpanded=!chatWidgetExpanded;renderChatWidget();return}
       if(action==='support-request')return requestEditorSupport(button);
       if(action==='support-dismiss'){editorProposal=null;render();return}
       if(action==='support-cancel')return cancelEditorSupport(button);
@@ -593,8 +604,28 @@ export function platformHtml(nonce) {
     document.addEventListener('click',event=>{if(event.target.closest('#headAction')?.dataset.previewExit==='1'){event.preventDefault();event.stopImmediatePropagation();location.href=/^sup_[a-z0-9_-]{4,120}$/u.test(supportSelectedId)?'/app?view=support&request='+encodeURIComponent(supportSelectedId):'/app'}},true);
     document.addEventListener('click',event=>{const button=event.target.closest('[data-action]'),action=button?.dataset.action||'';if(action==='history-dialog'){event.preventDefault();event.stopImmediatePropagation();const selected=site(),o=selected?._overrides;if(!o)return;showDialog('История изменений','<p class="muted">Здесь можно проверить все сохранённые правки и вернуть предыдущую версию.</p>'+changeHistoryRows(o,account(),Math.max((o.changes||[]).length,1),true));return}if(action==='rollback'&&button?.closest('#dialogContent')){event.preventDefault();event.stopImmediatePropagation();Promise.resolve(handleAction(action,button)).then(()=>{if($('dialog').open)closeDialog(true)});}},true);
     document.addEventListener('click',event=>{const button=event.target.closest('[data-action]');const action=button?.dataset.action||'';if(action==='telegram-dialog'||(button?.closest('#dialogContent')&&['telegram-connect','telegram-test','telegram-disconnect'].includes(action))){event.preventDefault();event.stopImmediatePropagation();if(action==='telegram-dialog')telegramDialog();else Promise.resolve(handleAction(action,button)).then(()=>{if(action==='telegram-disconnect'&&$('dialog').open)closeDialog(true)});}},true);
-    function openSiteSelector(kind){const s=site();if(!s)return;try{const url=new URL(s.target_url);url.searchParams.set('sitecare_select',kind);window.open(url.href,'sitecare-select')}catch{toast('Не удалось открыть сайт.')}}
-    window.addEventListener('message',async event=>{if(event.origin!==location.origin)return;const data=event.data;if(!data||data.channel!=='sitecare-select'||data.kind!=='phone')return;const s=site();if(!s)return;try{const result=await api('/v1/platform/sites/'+encodeURIComponent(siteId)+'/assistant/locate-phone',{method:'POST',body:JSON.stringify({pagePath:data.pagePath,blockId:data.blockId,source:data.source,occurrenceIndex:data.occurrenceIndex,originalDigits:data.originalDigits})});if(result.conversation)s._conversation=result.conversation;editorInventory={...(editorInventory||{})};editorProposal=result.type==='support'?null:{...result,siteId,selectedCandidateId:result.suggestedCandidateId||result.selectedCandidateId||''};render();const chatBox=document.querySelector('.assistant-chat');if(chatBox)chatBox.scrollTop=chatBox.scrollHeight}catch(err){toast(err.message)}});
+    let awaitingSiteSelection=false;
+    async function applyLocatedPhone(data,targetSiteId){
+      const s=site();if(!s||targetSiteId!==siteId)return;
+      try{
+        const result=await api('/v1/platform/sites/'+encodeURIComponent(siteId)+'/assistant/locate-phone',{method:'POST',body:JSON.stringify({pagePath:data.pagePath,blockId:data.blockId,source:data.source,occurrenceIndex:data.occurrenceIndex,originalDigits:data.originalDigits})});
+        if(result.conversation)s._conversation=result.conversation;
+        editorInventory={...(editorInventory||{})};
+        editorProposal=result.type==='support'?null:{...result,siteId,selectedCandidateId:result.suggestedCandidateId||result.selectedCandidateId||''};
+        chatWidgetOpen=true;render();
+        const chatBox=document.querySelector('.assistant-chat');if(chatBox)chatBox.scrollTop=chatBox.scrollHeight
+      }catch(err){toast(err.message)}
+    }
+    function openSiteSelector(kind){const s=site();if(!s)return;try{const url=new URL(s.target_url);url.searchParams.set('sitecare_select',kind);window.open(url.href,'sitecare-select');awaitingSiteSelection=true}catch{toast('Не удалось открыть сайт.')}}
+    window.addEventListener('message',event=>{if(event.origin!==location.origin)return;const data=event.data;if(!data||data.channel!=='sitecare-select'||data.kind!=='phone')return;awaitingSiteSelection=false;applyLocatedPhone(data,siteId)});
+    window.addEventListener('focus',async()=>{
+      if(!awaitingSiteSelection||!state||!siteId)return;
+      awaitingSiteSelection=false;
+      try{
+        const result=await api('/v1/platform/sites/'+encodeURIComponent(siteId)+'/selection');
+        if(result.selection)applyLocatedPhone(result.selection,siteId)
+      }catch{}
+    });
     $('toast').onclick=()=>{$('toast').classList.add('hidden');clearTimeout(toast.timer)};
     document.querySelectorAll('.nav').forEach(nav=>nav.addEventListener('click',event=>{const button=event.target.closest('button[data-view]');if(button)navigate(button.dataset.view)}));
     document.querySelectorAll('.nav button[data-view]').forEach(button=>{button.title=button.textContent.trim();button.setAttribute('aria-label',button.textContent.trim())});
