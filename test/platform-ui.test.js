@@ -93,7 +93,8 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /Передать задачу специалисту/u);
   assert.match(html, /Никакая платная работа не начнётся/u);
   assert.match(html, /Проведи SEO-диагностику/u);
-  assert.match(html, /diagnostic-chat-link/u);
+  assert.match(html, /class="chat-widget-head"/u);
+  assert.match(html, /Индекс здоровья:/u);
   assert.ok(html.indexOf('id="sidebarToggle"') < html.indexOf('id="clientNav"'));
   assert.doesNotMatch(html, /side-foot"><button id="sidebarToggle"/u);
   assert.match(html, /slice\(0,6\)/u);
