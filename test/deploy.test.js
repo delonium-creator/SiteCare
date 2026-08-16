@@ -144,7 +144,7 @@ test("pins the chosen account and exact database without widening scope", async 
   assert.equal(pinned.d1_databases[0].database_id, "chosen-database");
   assert.equal(pinned.vars.ALLOWED_HOSTNAME, SCOPE.hostname);
   assert.equal(pinned.vars.ALLOWED_PATH, SCOPE.pathname);
-  assert.equal(pinned.vars.TELEGRAM_GATEWAY_URL, "https://PUT-YOUR-GATEWAY.workers.dev");
+  assert.match(pinned.vars.TELEGRAM_GATEWAY_URL, /^https:\/\/sitecare-telegram-gateway\.[a-z0-9-]+\.workers\.dev$/u);
   assert.deepEqual(pinned.ai, { binding: "AI" });
   assert.equal(pinned.routes, undefined);
 });
