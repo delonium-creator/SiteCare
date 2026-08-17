@@ -389,9 +389,106 @@ function conversationContext(history) {
   return (Array.isArray(history) ? history : []).slice(-16).map((item) => ({ role: item?.role === "assistant" ? "assistant" : "user", content: safeText(item?.content, 700) })).filter((item) => item.content);
 }
 
+const CATEGORY_LABELS = { seo: "SEO", content: "контент", accessibility: "доступность", mobile: "мобильная версия", security: "безопасность", performance: "скорость", availability: "доступность сайта" };
+
+function categoryLabel(category) {
+  return CATEGORY_LABELS[category] || category;
+}
+
+function issueWord(count) {
+  return count === 1 ? "замечание" : count >= 2 && count <= 4 ? "замечания" : "замечаний";
+}
+
+function siteStatusAnswer(siteContext) {
+  const status = siteContext?.currentStatus || {};
+  const webhookReady = !status.formsRequired || (status.webhookVerified && status.testLeadVerified);
+  const parts = [
+    status.pageAvailable ? "сайт открывается" : "сайт сейчас не открывается",
+    webhookReady ? "заявки подключены" : "приём заявок ещё не настроен",
+    status.telegramConnected ? "Telegram подключён" : "Telegram не подключён"
+  ];
+  return `Проверил: ${parts.join(", ")}.`;
+}
+
+function diagnosticsAnswer(prompt, siteContext) {
+  const onlyCategory = /\bseo\b|поискову/iu.test(prompt) ? "seo" : null;
+  const issues = (siteContext?.diagnostics?.issues || []).filter((item) => !onlyCategory || item.category === onlyCategory);
+  const label = onlyCategory ? categoryLabel(onlyCategory) + "-" : "";
+  if (!issues.length) return `${onlyCategory ? categoryLabel(onlyCategory) + "-замечаний" : "Критических замечаний"} не нашёл — с этой стороны сайт в порядке.`;
+  const shown = issues.slice(0, 6).map((item) => item.title).join("; ");
+  return `Нашёл ${issues.length} ${label}${issueWord(issues.length)}: ${shown}${issues.length > 6 ? "…" : ""}.`;
+}
+
+function leadsAnswer(siteContext) {
+  const status = siteContext?.currentStatus || {};
+  if (!status.formsRequired) return "На подключённой странице пока не найдена обязательная форма заявки.";
+  const webhookReady = status.webhookVerified && status.testLeadVerified;
+  return webhookReady
+    ? "Приём заявок подключён и подтверждён — технических причин для сбоя не вижу. Если заявки всё равно не приходят, проверьте, что форма опубликована на сайте и её адрес не менялся."
+    : "Приём заявок ещё не подтверждён — нужно проверить Webhook формы в настройках подключения.";
+}
+
+const CAPABILITY_PATTERNS = [
+  /что\s+ты\s+умеешь/iu, /что\s+умеешь/iu, /что\s+ты\s+можешь/iu, /чем\s+.{0,15}помо/iu,
+  /как\s+ты\s+можешь\s+помо/iu, /как(?:\s+ты)?\s+это\s+работает/iu, /как\s+ты\s+работаешь/iu,
+  /какие\s+у\s+тебя\s+функци/iu, /для\s+чего\s+ты/iu, /расскажи\s+о\s+себе/iu, /^кто\s+ты(?:\s|\?|$)/iu,
+  /что\s+ты\s+за\s+помощник/iu, /что\s+ты\s+такое/iu, /что\s+ты\s+делаешь/iu, /твои\s+возможности/iu,
+  /список\s+команд/iu, /что\s+ты\s+знаешь/iu, /каким\s+образом\s+ты/iu
+];
+
+const STATUS_PATTERNS = [
+  /как\s+дела/iu, /вс[её]\s+(?:хорошо|ок|нормально|в\s+порядке)/iu, /сайт\s+(?:работает|доступен|открывается|жив)/iu,
+  /что\s+с\s+сайтом/iu, /статус\s+сайта/iu, /провер[ья].{0,12}сайт/iu, /состояние\s+сайта/iu
+];
+
+const SEO_PATTERNS = [
+  /\bseo\b/iu, /поискову/iu, /(?:какие|есть)\s+.{0,10}проблем/iu, /что\s+не\s+так/iu, /есть\s+ли?\s+ошибк/iu,
+  /что\s+нужно\s+исправ/iu, /недостатк/iu, /минус[ыа]?\s+сайта/iu, /что\s+улучшить/iu, /что\s+можно\s+улучшить/iu
+];
+
+const LEADS_PATTERNS = [/заявк/iu, /форма\s+работ/iu, /лид[ыоа]/iu];
+
+const HANDOFF_PATTERNS = [
+  /жив(?:ой|ую|ого)\s+человек/iu, /оператор/iu, /поговорить\s+с\s+человеком/iu, /соедини.{0,15}(?:специалист|поддержк)/iu,
+  /переведи.{0,15}(?:поддержк|специалист|оператор)/iu, /нужен\s+специалист/iu, /нужна\s+поддержка/iu,
+  /позови.{0,10}(?:человек|специалист|оператор|поддержк)/iu, /свяжите\s+меня/iu, /\bhuman\b/iu
+];
+
+function capabilityAnswer() {
+  return assistantResult({
+    type: "advice",
+    kind: "advice",
+    message: "Вот что я умею: проверить, открывается ли сайт и подключены ли заявки; показать найденные SEO и технические замечания; объяснить, почему могут не приходить заявки; и подготовить безопасную правку — телефон, график работы, текст или ссылку кнопки. Перед изменением сайта я всегда сначала покажу, что именно поменяется, и попрошу подтверждение. Если задача сложнее — соединю со специалистом поддержки.",
+    suggestions: ["Проверь состояние сайта", "Проведи SEO-диагностику", "Что можно улучшить?", "Почему могут не приходить заявки?"]
+  });
+}
+
+function localAssistantAnswer(prompt, siteContext) {
+  if (HANDOFF_PATTERNS.some((re) => re.test(prompt))) {
+    return assistantResult({
+      type: "advice",
+      kind: "advice",
+      message: "Хорошо, подключаю специалиста поддержки — опишите, пожалуйста, что случилось, я передам это вместе с историей диалога.",
+      supportSuggested: true,
+      supportReason: "Клиент попросил связать с живым специалистом."
+    });
+  }
+  if (CAPABILITY_PATTERNS.some((re) => re.test(prompt))) return capabilityAnswer();
+  if (STATUS_PATTERNS.some((re) => re.test(prompt))) {
+    return assistantResult({ type: "advice", kind: "advice", message: siteStatusAnswer(siteContext) });
+  }
+  if (LEADS_PATTERNS.some((re) => re.test(prompt))) {
+    return assistantResult({ type: "advice", kind: "advice", message: leadsAnswer(siteContext) });
+  }
+  if (SEO_PATTERNS.some((re) => re.test(prompt))) {
+    return assistantResult({ type: "advice", kind: "advice", message: diagnosticsAnswer(prompt, siteContext) });
+  }
+  return null;
+}
+
 function localConversation(prompt, inventory) {
   if (/^(?:отмена|отмени|начн[её]м заново|забудь|другая задача)$/iu.test(prompt)) return assistantResult({ type: "advice", kind: "advice", message: "Хорошо, предыдущую задачу отменил. Что хотите изменить?" });
-  if (/^(?:привет|здравствуй|добрый\s+(?:день|вечер|утро)|hello)\b/iu.test(prompt)) return assistantResult({ type: "advice", kind: "advice", message: "Здравствуйте! Опишите желаемый результат обычными словами. Я сам найду нужный элемент, задам недостающие вопросы и покажу изменение перед применением." });
+  if (/^(?:привет|здравствуй|добрый\s+(?:день|вечер|утро)|hello)(?:\s|[,.!?]|$)/iu.test(prompt)) return assistantResult({ type: "advice", kind: "advice", message: "Здравствуйте! Опишите желаемый результат обычными словами. Я сам найду нужный элемент, задам недостающие вопросы и покажу изменение перед применением." });
   if (/(?:что\s+ты\s+(?:умеешь|можешь(?:\s+сделать)?)|как\s+это\s+работает|чем\s+поможешь)/iu.test(prompt)) return assistantResult({ type: "advice", kind: "advice", message: "Я могу изменить конкретный телефон, график работы, текст или ссылку кнопки. Сначала найду элемент на опубликованном сайте, затем уточню детали и попрошу одно подтверждение." });
   if (/(?:сколько|какие|найд|покаж).*(?:кноп|страниц|телефон)/iu.test(prompt)) {
     const pages = Number(inventory?.pageCount || 0), buttons = Number(inventory?.candidates?.length || 0), phones = Number(inventory?.phones?.length || 0);
@@ -414,10 +511,22 @@ function explicitEditRequest(prompt) {
     /^(?:телефон|номер|график|кнопка)(?:\s|$)/iu.test(prompt);
 }
 
-async function askAi(ai, prompt, inventory, history = []) {
+async function askAi(ai, prompt, inventory, history = [], siteContext = {}) {
   if (!ai || typeof ai.run !== "function") return null;
   const buttonContext = (inventory?.candidates || []).slice(0, 40).map((item) => ({ text: item.text, url: item.url, page: item.pagePath }));
-  const messages = [{ role: "system", content: `Ты полноценный AI-помощник SiteCare для владельца сайта. Пойми смысл сообщения и отвечай коротко, ясно и по-русски. Можно отвечать на любые вопросы о сайте, объяснять найденные элементы и предлагать улучшения — для этого используй kind=advice. Автоматически доступны только четыре безопасных действия: заменить выбранный телефон сразу во всех местах сайта, изменить график, текст или HTTPS-ссылку конкретной кнопки. Не выдумывай элементы и не обещай недоступное: используй данные опубликованного сайта. Если не хватает ровно одного значения, задай один естественный вопрос. Если нужна сложная правка кода, дизайна или остаётся неоднозначность, объясни это и предложи специалиста: supportSuggested=true. Верни только JSON {"kind":"phone|schedule|button_text|button_url|advice|unknown","value":"новое значение","targetHint":"текущий элемент","message":"ответ или вопрос","supportSuggested":false,"supportReason":""}. Никогда не утверждай, что изменение уже применено. Сайт: ${JSON.stringify({ pages: inventory?.pageCount || 0, phones: inventory?.phones || [], schedules: inventory?.schedules || [], buttons: buttonContext })}` }, ...conversationContext(history), { role: "user", content: prompt }];
+  const status = siteContext?.currentStatus || {};
+  const siteFacts = {
+    pages: inventory?.pageCount || 0,
+    phones: inventory?.phones || [],
+    schedules: inventory?.schedules || [],
+    buttons: buttonContext,
+    pageAvailable: status.pageAvailable,
+    formsRequired: status.formsRequired,
+    formsWorking: Boolean(status.webhookVerified && status.testLeadVerified),
+    telegramConnected: status.telegramConnected,
+    diagnosticsSummary: siteContext?.diagnostics?.summary || null
+  };
+  const messages = [{ role: "system", content: `Ты полноценный AI-помощник SiteCare для владельца сайта. Пойми смысл сообщения и отвечай коротко, ясно и по-русски. Можно отвечать на любые вопросы о сайте, объяснять найденные элементы и предлагать улучшения — для этого используй kind=advice. Автоматически доступны только четыре безопасных действия: заменить выбранный телефон сразу во всех местах сайта, изменить график, текст или HTTPS-ссылку конкретной кнопки. Не выдумывай элементы и не обещай недоступное: используй данные опубликованного сайта. Если не хватает ровно одного значения, задай один естественный вопрос. Если вопрос не про сайт, не понятен, либо нужна сложная правка кода, дизайна — объясни это и предложи специалиста: supportSuggested=true. Верни только JSON {"kind":"phone|schedule|button_text|button_url|advice|unknown","value":"новое значение","targetHint":"текущий элемент","message":"ответ или вопрос","supportSuggested":false,"supportReason":""}. Никогда не утверждай, что изменение уже применено. Сайт: ${JSON.stringify(siteFacts)}` }, ...conversationContext(history), { role: "user", content: prompt }];
   for (const model of AI_MODELS) {
     try {
       const raw = await ai.run(model, { messages, max_completion_tokens: 450, temperature: 0.1, top_p: 0.8 });
@@ -503,6 +612,8 @@ export async function prepareSiteChange({ prompt: rawPrompt, inventory, ai, open
     const deterministic = parseLocalChange(prompt);
     if (deterministic && deterministic.kind !== "unknown") return finalizeProposal(deterministic, inventory);
   }
+  const localAnswer = localAssistantAnswer(prompt, siteContext);
+  if (localAnswer) return localAnswer;
   if (openAi?.apiKey) {
     try {
       const proposal = fromOpenAi(await requestOpenAiAssistant({
@@ -531,7 +642,7 @@ export async function prepareSiteChange({ prompt: rawPrompt, inventory, ai, open
     }
   }
   if (ai && typeof ai.run === "function") {
-    const aiProposal = await askAi(ai, prompt, inventory, history);
+    const aiProposal = await askAi(ai, prompt, inventory, history, siteContext);
     if (aiProposal) return finalizeProposal(aiProposal, inventory, true, aiProposal.model);
   }
   const conversational = localConversation(prompt, inventory);

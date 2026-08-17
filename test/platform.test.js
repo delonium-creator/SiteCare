@@ -378,7 +378,7 @@ test("a completed assistant response closes the previous editing dialog", async 
   });
 
   assert.equal(result.type, "advice");
-  assert.match(result.message, /могу изменить конкретный телефон/iu);
+  assert.match(result.message, /вот что я умею/iu);
 });
 
 test("exact commands stay deterministic while the AI handles genuinely ambiguous wording", async () => {

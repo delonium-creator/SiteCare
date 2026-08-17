@@ -59,7 +59,7 @@ test("a general website question uses OpenAI while an exact phone workflow stays
     candidates: []
   };
   const answer = await prepareSiteChange({
-    prompt: "Что можно улучшить на сайте?",
+    prompt: "Стоит ли обновить дизайн сайта под текущие тренды?",
     inventory,
     openAi: { apiKey: "sk-test", model: "gpt-5-mini" },
     siteContext: { diagnostics: { summary: { total: 0 } } },
