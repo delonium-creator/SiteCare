@@ -190,7 +190,7 @@ export function platformHtml(nonce) {
   (()=>{
     'use strict';
     const initialParams=new URL(location.href).searchParams;
-    let state=null,csrf='',accountId='',siteId='',currentView='',operatorClientId='',dialogDirty=false,editorProposal=null,editorInventory=null,renderClientEdit=null,setupGuideMarkup=null,showSetupGuide=null,addSiteDialog=null,supportQueueData=null,supportSelectedId=initialParams.get('request')||'',supportDetails=null,supportTelegramData=null,supportQueueLoading=false,conversationLoadingSite='',contentChangesLoadingSite='',reportLoadingSite='',chatObserved=null,chatWidgetOpen=false,chatWidgetExpanded=false,chatLastMessageCount=0,diagnosticsRunning=false,operatorPreviewAccountId=/^acc_[a-z0-9_-]{4,80}$/u.test(initialParams.get('preview')||'')?initialParams.get('preview'):'';
+    let state=null,csrf='',accountId='',siteId='',currentView='',operatorClientId='',dialogDirty=false,editorProposal=null,editorInventory=null,renderClientEdit=null,setupGuideMarkup=null,showSetupGuide=null,addSiteDialog=null,supportQueueData=null,supportSelectedId=initialParams.get('request')||'',supportDetails=null,supportTelegramData=null,supportQueueLoading=false,conversationLoadingSite='',contentChangesLoadingSite='',reportLoadingSite='',chatObserved=null,chatSending=false,chatWidgetOpen=false,chatWidgetExpanded=false,chatLastMessageCount=0,diagnosticsRunning=false,operatorPreviewAccountId=/^acc_[a-z0-9_-]{4,80}$/u.test(initialParams.get('preview')||'')?initialParams.get('preview'):'';
     const $=id=>document.getElementById(id);
     const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     function supportTerminology(root){if(!root)return;const replacements=[[/Оператору SiteCare/gu,'В поддержку SiteCare'],[/оператору SiteCare/gu,'в поддержку SiteCare'],[/Оператор SiteCare/gu,'Поддержка SiteCare'],[/оператором/gu,'поддержкой'],[/оператору/gu,'поддержке'],[/оператор/gu,'поддержка'],[/Оператор/gu,'Поддержка']];const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let node;while((node=walker.nextNode())){let value=node.nodeValue;for(const [pattern,next] of replacements)value=value.replace(pattern,next);if(value!==node.nodeValue)node.nodeValue=value}}
@@ -371,9 +371,10 @@ export function platformHtml(nonce) {
       const supportLabels={new:'Обращение передано',active:'Поддержка подключилась',waiting_client:'Поддержка ответила'};
       const supportStrip=operator?'':supportRequest?'<div class="support-strip"><div><b>'+h(supportLabels[supportRequest.status]||'Поддержка подключена')+'</b><span>Продолжайте писать здесь — сообщения видит специалист поддержки.</span></div><button class="ghost" data-editor-action="support-cancel">Отменить обращение</button></div>':editorProposal?.supportSuggested?'<div class="support-strip suggested"><div><b>Позвать специалиста?</b><span>'+h(editorProposal.supportReason||'Помощник не может безопасно выполнить эту задачу автоматически.')+'</span></div><div class="row wrap"><button class="ghost" data-editor-action="support-dismiss">Продолжить самому</button><button class="primary" data-editor-action="support-request">Связаться с поддержкой</button></div></div>':'';
       const chatEnabled=Boolean(supportRequest)||(Number(s.page_ok)!==0&&Number(s.tls_ok)!==0);
+      const inputDisabled=!chatEnabled||chatSending;
       const choiceIsPhone=(editorProposal?.candidates||[]).some(candidate=>candidate.phone);
       const choiceRows=!supportRequest&&editorProposal?.type==='clarification'&&(editorProposal.candidates||[]).length?'<div class="editor-choice-list">'+(editorProposal.candidates||[]).map((candidate,index)=>{const phone=Boolean(candidate.phone),title=phone?(editorProposal.allowAll?(candidate.locationLabel||candidate.sectionLabel||candidate.pageTitle):candidate.phone):(candidate.text||'Кнопка без текста'),detail=phone?(editorProposal.allowAll?[(candidate.pageTitle||candidate.pagePath),(candidate.context||'')].filter(Boolean).join(' · '):candidate.occurrenceCount>1?'Найдено мест: '+candidate.occurrenceCount:(candidate.locationLabel||candidate.sectionLabel||candidate.pageTitle)):[candidate.locationLabel||candidate.sectionLabel,candidate.pageTitle||candidate.pagePath].filter(Boolean).join(' · ');return'<button class="editor-choice" data-editor-action="reply-choice" data-reply="'+(index+1)+'"><i>'+(index+1)+'</i><span><b>'+h(title)+'</b><span>'+h(detail)+'</span></span><small>Выбрать</small></button>'}).join('')+(editorProposal.allowAll?'<button class="editor-choice editor-choice-all" data-editor-action="reply-choice" data-reply="во всех местах"><i>∞</i><span><b>Во всех местах</b><span>Изменить этот номер везде на сайте</span></span><small>Выбрать</small></button>':'')+'</div>'+(choiceIsPhone?'<button class="ghost select-on-site" type="button" data-editor-action="select-on-site" data-select-kind="phone">Выбрать прямо на сайте</button>':''):'';
-      const assistant='<section class="card editor-chat-panel"><header class="chat-panel-head"><div class="chat-identity"><div class="bot"><img src="/sitecare-assistant.png" alt="Помощник SiteCare"></div><div><span class="eyebrow">Личный технический помощник</span><h1>'+(supportRequest?'Диалог со специалистом':'Чем помочь с сайтом?')+'</h1><p>'+(supportRequest?'Продолжайте диалог здесь — специалист видит историю задачи.':'Спросите о состоянии, SEO или проблеме. Безопасные правки я сначала покажу и попрошу подтвердить.')+'</p></div></div><div class="chat-presence"><i></i><span>'+h(supportRequest?'Поддержка подключена':state.assistant?.label||'AI-помощник')+'</span></div></header>'+chatMarkup+choiceRows+proposalMarkup(o)+'<div class="chat-suggestions">'+assistantSuggestions(conversation,chatWidgetExpanded)+'</div><div class="prompt chat-composer"><textarea id="changePromptV45" aria-label="Сообщение" rows="1" placeholder="'+(supportRequest?'Напишите сообщение специалисту':'Задайте вопрос о сайте или опишите задачу')+'" '+(!chatEnabled?'disabled':'')+'>'+h(draft)+'</textarea><button class="primary chat-send" type="button" aria-label="Отправить сообщение" data-editor-action="prepare" '+(!chatEnabled?'disabled':'')+'><span>Отправить</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 12 16-8-5 16-3-6-8-2Z"/><path d="m12 14 8-10"/></svg></button></div><div class="composer-hint">Enter — отправить · Shift+Enter — новая строка</div>'+(!chatEnabled?'<div class="editor-disabled">Сайт недоступен для анализа. Проверьте раздел «Диагностика» или передайте задачу поддержке.</div>':'')+supportStrip+'</section>';
+      const assistant='<section class="card editor-chat-panel"><header class="chat-panel-head"><div class="chat-identity"><div class="bot"><img src="/sitecare-assistant.png" alt="Помощник SiteCare"></div><div><span class="eyebrow">Личный технический помощник</span><h1>'+(supportRequest?'Диалог со специалистом':'Чем помочь с сайтом?')+'</h1><p>'+(supportRequest?'Продолжайте диалог здесь — специалист видит историю задачи.':'Спросите о состоянии, SEO или проблеме. Безопасные правки я сначала покажу и попрошу подтвердить.')+'</p></div></div><div class="chat-presence"><i></i><span>'+h(supportRequest?'Поддержка подключена':state.assistant?.label||'AI-помощник')+'</span></div></header>'+chatMarkup+choiceRows+proposalMarkup(o)+'<div class="chat-suggestions">'+assistantSuggestions(conversation,chatWidgetExpanded)+'</div><div class="prompt chat-composer"><textarea id="changePromptV45" aria-label="Сообщение" rows="1" placeholder="'+(supportRequest?'Напишите сообщение специалисту':'Задайте вопрос о сайте или опишите задачу')+'" '+(inputDisabled?'disabled':'')+'>'+h(draft)+'</textarea><button class="primary chat-send" type="button" aria-label="Отправить сообщение" data-editor-action="prepare" '+(inputDisabled?'disabled':'')+'><span>Отправить</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 12 16-8-5 16-3-6-8-2Z"/><path d="m12 14 8-10"/></svg></button></div><div class="composer-hint">Enter — отправить · Shift+Enter — новая строка</div>'+(!chatEnabled?'<div class="editor-disabled">Сайт недоступен для анализа. Проверьте раздел «Диагностика» или передайте задачу поддержке.</div>':'')+supportStrip+'</section>';
       const prevBox=$('chatWidget').querySelector('.assistant-chat');
       const wasNearBottom=!prevBox||prevBox.scrollHeight-prevBox.scrollTop-prevBox.clientHeight<80;
       const prevScrollTop=prevBox?prevBox.scrollTop:0;
@@ -502,9 +503,33 @@ export function platformHtml(nonce) {
 
     async function prepareEditorChange(button){
       const field=$('changePromptV45'),prompt=field?.value.trim()||'';if(!prompt){toast('Напишите вопрос или опишите задачу.');field?.focus();return}
-      const typing=$('chatTyping');typing?.classList.remove('hidden');if(field)field.disabled=true;document.querySelector('.assistant-chat')?.scrollTo({top:999999,behavior:'smooth'});
-      try{busy(button,true);const result=await api('/v1/platform/sites/'+encodeURIComponent(siteId)+'/assistant',{method:'POST',body:JSON.stringify({prompt})});const selected=site();if(selected)selected._conversation=result.conversation;chatObserved=result.observed||null;editorProposal=result.type==='support'?null:{...result,siteId,selectedCandidateId:result.suggestedCandidateId||''};try{sessionStorage.removeItem('sitecare:draft:'+siteId)}catch{}render();const chatBox=document.querySelector('.assistant-chat');if(chatBox)chatBox.scrollTop=chatBox.scrollHeight;document.querySelector('.proposal-card')?.scrollIntoView({behavior:'smooth',block:'nearest'})}
-      catch(err){typing?.classList.add('hidden');if(field)field.disabled=false;toast(err.message)}finally{busy(button,false)}
+      const s=site();if(!s)return;
+      if(!s._conversation)s._conversation={messages:[],supportRequest:null};
+      const optimisticMessage={role:'client',content:prompt,createdAt:new Date().toISOString()};
+      s._conversation.messages=[...(s._conversation.messages||[]),optimisticMessage];
+      chatSending=true;
+      try{sessionStorage.removeItem('sitecare:draft:'+siteId)}catch{}
+      render();
+      $('chatTyping')?.classList.remove('hidden');
+      const chatBox=document.querySelector('.assistant-chat');if(chatBox)chatBox.scrollTop=chatBox.scrollHeight;
+      try{
+        busy(button,true);
+        const result=await api('/v1/platform/sites/'+encodeURIComponent(siteId)+'/assistant',{method:'POST',body:JSON.stringify({prompt})});
+        const selected=site();if(selected)selected._conversation=result.conversation;
+        chatObserved=result.observed||null;
+        editorProposal=result.type==='support'?null:{...result,siteId,selectedCandidateId:result.suggestedCandidateId||''};
+        chatSending=false;
+        render();
+        const chatBox2=document.querySelector('.assistant-chat');if(chatBox2)chatBox2.scrollTop=chatBox2.scrollHeight;
+        document.querySelector('.proposal-card')?.scrollIntoView({behavior:'smooth',block:'nearest'})
+      }catch(err){
+        s._conversation.messages=s._conversation.messages.filter(item=>item!==optimisticMessage);
+        chatSending=false;
+        try{sessionStorage.setItem('sitecare:draft:'+siteId,prompt)}catch{}
+        render();
+        const field2=$('changePromptV45');if(field2){field2.value=prompt;field2.focus()}
+        toast(err.message)
+      }finally{busy(button,false)}
     }
 
     async function requestEditorSupport(button,confirmed=false){
