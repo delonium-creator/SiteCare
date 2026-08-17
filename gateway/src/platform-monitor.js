@@ -370,6 +370,20 @@ export function diagnosePage(html, pageUrl, observation = {}) {
   if (Number(observation.latencyMs || 0) > 2500) add({ id: `latency:${path}`, category: "performance", severity: Number(observation.latencyMs) > 5000 ? "high" : "medium", title: "Страница отвечает медленно", evidence: `Время получения HTML: ${Number(observation.latencyMs)} мс.`, recommendation: "Повторите замер в другое время; если задержка сохраняется, проверьте тяжёлые скрипты, внешние сервисы и публикацию.", probableCause: "Вероятны задержка сети, перегруженный внешний сервис или тяжёлый пользовательский код; одного замера недостаточно для точной причины.", confidence: "medium" });
   if (source.length > 700_000) add({ id: `html-size:${path}`, category: "performance", severity: "medium", title: "HTML страницы слишком большой", evidence: `Размер HTML: ${Math.round(source.length / 1024)} КБ.`, recommendation: "Проверьте дублирующиеся блоки, встроенный код и объём контента.", probableCause: "На странице много блоков, встроенных данных или повторяющегося пользовательского кода." });
 
+  // Heuristic static-HTML checks, not a legal audit: a cookie banner injected
+  // purely by a third-party script, or a policy page linked in a way this
+  // regex doesn't recognize, can produce a false "not found". The site-wide
+  // privacy-link issue below is filtered per-page in scanSiteInventory so it
+  // reports once, not once per crawled page.
+  const hasPrivacyLink = /<a\b[^>]*href\s*=\s*["'][^"']*(?:privacy|policy|confidencial|конфиденц)[^"']*["'][^>]*>/iu.test(source)
+    || /политик[аи]\s+конфиденциальности|обработк[аи]\s+персональных\s+данных/iu.test(visibleText(source));
+  const hasForm = /<form\b/iu.test(source);
+  const consentNearForm = hasForm && /соглаша(?:юсь|ется)|согласи[ея]\s+на\s+обработку|обработку\s+(?:своих\s+)?персональных\s+данных|я\s+согласен/iu.test(visibleText(source));
+  const cookieBannerFound = /cookie[-\s]?(?:consent|banner|notice|indicator)|используем\s+файлы\s+cookie|согласны?\s+с\s+использованием\s+cookie/iu.test(source);
+  if (!hasPrivacyLink) add({ id: `legal-privacy-link:${path}`, category: "legal", severity: "medium", title: "Не найдена ссылка на политику конфиденциальности", evidence: "На странице не обнаружена ссылка или упоминание политики обработки персональных данных.", recommendation: "Добавьте в подвал сайта ссылку на страницу с политикой конфиденциальности.", probableCause: "Страница политики не создана или ссылка на неё не добавлена в футер.", confidence: "medium" });
+  if (hasForm && !consentNearForm) add({ id: `legal-consent-form:${path}`, category: "legal", severity: "high", title: "У формы нет текста согласия на обработку данных", evidence: "На странице есть форма, но рядом не найден текст о согласии на обработку персональных данных.", recommendation: "Добавьте рядом с формой чекбокс или текст о согласии на обработку персональных данных (152-ФЗ).", probableCause: "Форма настроена без блока согласия на обработку данных.", confidence: "medium" });
+  if (!cookieBannerFound) add({ id: `legal-cookie-banner:${path}`, category: "legal", severity: "low", title: "Не обнаружено уведомление об использовании cookie", evidence: "В HTML не найдены признаки баннера согласия на использование cookie.", recommendation: "Включите уведомление об использовании cookie в настройках сайта.", probableCause: "Баннер cookie не включён, либо подключается сторонним скриптом, который не виден в HTML.", confidence: "medium" });
+
   return {
     facts: {
       url: url.href,
@@ -391,7 +405,8 @@ export function diagnosePage(html, pageUrl, observation = {}) {
       latencyMs: Number(observation.latencyMs || 0),
       httpStatus: Number(observation.httpStatus || 0),
       htmlBytes: source.length,
-      securityHeaders: observation.headers || {}
+      securityHeaders: observation.headers || {},
+      hasPrivacyLink
     },
     issues
   };
@@ -579,6 +594,27 @@ export async function scanSiteInventory(site, fetchImpl = fetch, { maxPages = 40
   };
   duplicateFacts("title", "заголовок");
   duplicateFacts("description", "description");
+  // A privacy-policy link usually lives once in a global footer, not on every
+  // crawled page -- judging it per-page would spam one issue per page even
+  // when the site genuinely has the link. Collapse to a single site-level
+  // issue only if it's missing everywhere.
+  const siteHasPrivacyLink = pages.some((page) => page.diagnostics?.facts?.hasPrivacyLink);
+  const diagnosticIssuesFiltered = diagnosticIssues.filter((issue) => !issue.issueId.startsWith("legal-privacy-link:"));
+  diagnosticIssues.length = 0;
+  diagnosticIssues.push(...diagnosticIssuesFiltered);
+  if (!siteHasPrivacyLink && pages.length) {
+    diagnosticIssues.push(diagnosticIssue({
+      id: `legal-privacy-link:site`,
+      category: "legal",
+      severity: "medium",
+      title: "Не найдена ссылка на политику конфиденциальности",
+      page: pages[0].page.url,
+      evidence: "Ни на одной проверенной странице не обнаружена ссылка или упоминание политики обработки персональных данных.",
+      recommendation: "Добавьте в подвал сайта ссылку на страницу с политикой конфиденциальности.",
+      probableCause: "Страница политики не создана или ссылка на неё не добавлена в футер.",
+      confidence: "medium"
+    }));
+  }
   const severityCounts = { high: 0, medium: 0, low: 0 };
   const categoryCounts = {};
   for (const issue of diagnosticIssues) {
@@ -588,7 +624,7 @@ export async function scanSiteInventory(site, fetchImpl = fetch, { maxPages = 40
   return {
     scannedAt: new Date().toISOString(),
     pageCount: pages.length,
-    pages: pages.map((item) => item.page),
+    pages: pages.map((item) => ({ ...item.page, schedules: item.schedules })),
     candidates,
     phoneCandidates: precisePhones,
     formCount: uniqueForms.size,
@@ -893,6 +929,158 @@ export async function runDueHealthScans(env, { limit = 10, fetchImpl = fetch } =
   return { scanned: sites.length, failed: settled.filter((item) => item.status === "rejected").length };
 }
 
+function chunkArray(items, size) {
+  const out = [];
+  for (let index = 0; index < items.length; index += size) out.push(items.slice(index, index + size));
+  return out;
+}
+
+// Content that survives an edit through Tilda itself (not through SiteCare)
+// has to be diffed against something content-independent, or the "identity"
+// changes along with the content and old/new look like two unrelated
+// candidates. blockId (Tilda's stable id="recNNN") + matchIndex (page-local
+// discovery order) is the closest thing to a stable slot key static HTML
+// analysis can offer — it can drift if a block is reordered or a new match
+// is inserted earlier in the same block, an accepted approximation.
+export function buildContentFields(inventory) {
+  const fields = new Map();
+  const set = (pagePath, pageTitle, field, slotKey, slotLabel, value) => {
+    if (value === undefined || value === null) return;
+    const key = `${pagePath}|${field}|${slotKey}`;
+    fields.set(key, { pagePath, pageTitle: safeText(pageTitle, 200), field, slotKey, slotLabel: safeText(slotLabel, 120), value: safeText(value, 400) });
+  };
+  const pageFacts = inventory?.diagnostics?.pageFacts || [];
+  for (const page of inventory?.pages || []) {
+    const facts = pageFacts.find((item) => item.path === page.path);
+    if (facts) {
+      set(page.path, page.title, "title", "", "", facts.title);
+      set(page.path, page.title, "description", "", "", facts.description);
+      set(page.path, page.title, "h1", "", "", (facts.h1 || []).join(" / "));
+    }
+    (page.schedules || []).forEach((schedule, index) => set(page.path, page.title, "schedule", String(index), "", schedule));
+  }
+  for (const candidate of inventory?.phoneCandidates || []) {
+    set(candidate.pagePath, candidate.pageTitle, "phone", `${candidate.blockId}|${candidate.matchIndex}`, candidate.sectionLabel, candidate.phone);
+  }
+  for (const candidate of inventory?.candidates || []) {
+    if (candidate.text) set(candidate.pagePath, candidate.pageTitle, "button_text", `${candidate.blockId}|${candidate.matchIndex}`, candidate.sectionLabel, candidate.text);
+    if (candidate.url) set(candidate.pagePath, candidate.pageTitle, "button_url", `${candidate.blockId}|${candidate.matchIndex}`, candidate.sectionLabel, candidate.url);
+  }
+  return fields;
+}
+
+export async function runSiteContentAudit(env, site, fetchImpl = fetch) {
+  const inventory = await scanSiteInventory(site, fetchImpl, { maxPages: site.scope === "site" ? 40 : 1 });
+  const fields = buildContentFields(inventory);
+  const existingRows = await env.GATEWAY_DB.prepare(
+    "SELECT page_path, field, slot_key, value FROM platform_content_snapshots WHERE site_id = ?"
+  ).bind(site.site_id).all();
+  const existing = new Map((existingRows?.results || []).map((row) => [`${row.page_path}|${row.field}|${row.slot_key}`, row.value]));
+  const checkedAt = new Date().toISOString();
+  const statements = [];
+  let changesLogged = 0;
+  for (const field of fields.values()) {
+    const key = `${field.pagePath}|${field.field}|${field.slotKey}`;
+    const previous = existing.get(key);
+    statements.push(env.GATEWAY_DB.prepare(
+      "INSERT INTO platform_content_snapshots (site_id, page_path, field, slot_key, value, updated_at) VALUES (?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(site_id, page_path, field, slot_key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+    ).bind(site.site_id, field.pagePath, field.field, field.slotKey, field.value, checkedAt));
+    // A slot seen for the first time only seeds the snapshot -- logging a
+    // "changed from nothing" entry on every site's first-ever audit would
+    // flood the log with noise instead of real edits.
+    if (previous !== undefined && previous !== field.value) {
+      statements.push(env.GATEWAY_DB.prepare(
+        "INSERT INTO platform_content_changes (site_id, page_path, page_title, field, slot_label, old_value, new_value, detected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).bind(site.site_id, field.pagePath, field.pageTitle, field.field, field.slotLabel, previous, field.value, checkedAt));
+      changesLogged += 1;
+    }
+  }
+  for (const group of chunkArray(statements, 50)) await env.GATEWAY_DB.batch(group);
+  await env.GATEWAY_DB.batch([
+    env.GATEWAY_DB.prepare(
+      "DELETE FROM platform_content_changes WHERE site_id = ? AND id NOT IN (SELECT id FROM platform_content_changes WHERE site_id = ? ORDER BY id DESC LIMIT 200)"
+    ).bind(site.site_id, site.site_id),
+    env.GATEWAY_DB.prepare(
+      "UPDATE platform_sites SET last_content_audit_at = ?, next_content_audit_at = ? WHERE site_id = ?"
+    ).bind(checkedAt, nextCheckAt(24 * 60, new Date(checkedAt)), site.site_id)
+  ]);
+  return { fieldsTracked: fields.size, changesLogged };
+}
+
+export async function runDueContentAudits(env, { limit = 10, fetchImpl = fetch } = {}) {
+  const now = new Date().toISOString();
+  const rows = await env.GATEWAY_DB.prepare(
+    `SELECT s.* ${ACTIVE_CONTROL_SITES_FROM_WHERE} AND (s.next_content_audit_at IS NULL OR s.next_content_audit_at <= ?) ORDER BY COALESCE(s.next_content_audit_at, s.created_at) LIMIT ?`
+  ).bind(now, now, now, now, Math.min(10, Math.max(1, Number(limit) || 5))).all();
+  const sites = rows?.results || [];
+  const settled = await Promise.allSettled(sites.map((site) => runSiteContentAudit(env, site, fetchImpl)));
+  return { audited: sites.length, failed: settled.filter((item) => item.status === "rejected").length };
+}
+
+function daysWord(count) {
+  const mod10 = count % 10, mod100 = count % 100;
+  if (mod100 >= 11 && mod100 <= 14) return "дней";
+  if (mod10 === 1) return "день";
+  if (mod10 >= 2 && mod10 <= 4) return "дня";
+  return "дней";
+}
+
+// RDAP (the modern, standardized successor to WHOIS) is free, needs no API
+// key, and rdap.org bootstraps to the correct registry for most TLDs -- a
+// meaningfully better option than a paid WHOIS API for a feature this
+// low-frequency. Registrar-name extraction across registries is
+// inconsistent (jCard parsing, not always present); the expiry date is the
+// feature's real value, so the registrar name is kept best-effort only.
+export async function checkDomainExpiry(hostname, fetchImpl = fetch) {
+  const response = await fetchImpl(`https://rdap.org/domain/${encodeURIComponent(hostname)}`, { headers: { Accept: "application/rdap+json" } });
+  if (!response.ok) throw new Error(`RDAP HTTP ${response.status}`);
+  const data = await response.json();
+  const expiration = (Array.isArray(data.events) ? data.events : []).find((event) => event.eventAction === "expiration");
+  return {
+    expiresAt: expiration?.eventDate ? new Date(expiration.eventDate).toISOString() : null,
+    registrar: safeText(data.ldhName || "", 200)
+  };
+}
+
+async function runSiteDomainCheck(env, site, fetchImpl = fetch) {
+  const checkedAt = new Date().toISOString();
+  let expiresAt = null, registrar = "", errorText = "";
+  try {
+    const result = await checkDomainExpiry(new URL(site.target_origin).hostname, fetchImpl);
+    expiresAt = result.expiresAt;
+    registrar = result.registrar;
+  } catch (error) {
+    errorText = safeText(error instanceof Error ? error.message : "RDAP недоступен.", 200);
+  }
+  await env.GATEWAY_DB.prepare(
+    "UPDATE platform_sites SET domain_expires_at = ?, domain_registrar = ?, last_domain_check_at = ?, next_domain_check_at = ?, domain_check_error = ?, updated_at = ? WHERE site_id = ?"
+  ).bind(expiresAt, registrar || null, checkedAt, nextCheckAt(7 * 24 * 60, new Date(checkedAt)), errorText || null, checkedAt, site.site_id).run();
+  if (expiresAt) {
+    const daysLeft = Math.floor((Date.parse(expiresAt) - Date.now()) / (24 * 60 * 60 * 1000));
+    // eventId is stable per site+expiry-date, so sendNotification's own
+    // dedup naturally sends this once per unresolved expiry rather than
+    // needing a separate notified-at column here.
+    if (daysLeft >= 0 && daysLeft <= 30) {
+      await sendNotification(
+        env, site, `${site.site_id}:domain-expiring:${expiresAt.slice(0, 10)}`, "domain-expiring",
+        `⚠️ Домен сайта «${site.name}» истекает через ${daysLeft} ${daysWord(daysLeft)} (${expiresAt.slice(0, 10)}). Продлите регистрацию домена, чтобы сайт не перестал открываться.`
+      );
+    }
+  }
+  return { expiresAt, error: Boolean(errorText) };
+}
+
+export async function runDueDomainChecks(env, { limit = 10, fetchImpl = fetch } = {}) {
+  const now = new Date().toISOString();
+  const rows = await env.GATEWAY_DB.prepare(
+    `SELECT s.* ${ACTIVE_CONTROL_SITES_FROM_WHERE} AND (s.next_domain_check_at IS NULL OR s.next_domain_check_at <= ?) ORDER BY COALESCE(s.next_domain_check_at, s.created_at) LIMIT ?`
+  ).bind(now, now, now, now, Math.min(10, Math.max(1, Number(limit) || 5))).all();
+  const sites = rows?.results || [];
+  const settled = await Promise.allSettled(sites.map((site) => runSiteDomainCheck(env, site, fetchImpl)));
+  return { checked: sites.length, failed: settled.filter((item) => item.status === "rejected").length };
+}
+
 // Always frames the week as a result, never as an absence of work — "checked
 // N times, steady" is the honest positive version of "nothing broke".
 export function buildDigestSummary({
@@ -991,29 +1179,72 @@ export async function runDueDigests(env, { limit = 10 } = {}) {
   return { sent: sites.length, failed: settled.filter((item) => item.status === "rejected").length };
 }
 
+async function runSiteMonitorRollup(env, site) {
+  const now = new Date();
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1));
+  const day = dayStart.toISOString().slice(0, 10);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+  const stats = await env.GATEWAY_DB.prepare(
+    "SELECT COUNT(*) AS checks, SUM(page_ok) AS page_ok_count, AVG(latency_ms) AS avg_latency FROM platform_monitor_runs WHERE site_id = ? AND checked_at >= ? AND checked_at < ?"
+  ).bind(site.site_id, dayStart.toISOString(), dayEnd.toISOString()).first();
+  await env.GATEWAY_DB.batch([
+    env.GATEWAY_DB.prepare(
+      "INSERT INTO platform_monitor_daily (site_id, day, checks, page_ok_count, avg_latency_ms) VALUES (?, ?, ?, ?, ?) " +
+      "ON CONFLICT(site_id, day) DO UPDATE SET checks = excluded.checks, page_ok_count = excluded.page_ok_count, avg_latency_ms = excluded.avg_latency_ms"
+    ).bind(site.site_id, day, Number(stats?.checks || 0), Number(stats?.page_ok_count || 0), Math.round(Number(stats?.avg_latency || 0))),
+    env.GATEWAY_DB.prepare("UPDATE platform_sites SET next_rollup_at = ? WHERE site_id = ?").bind(nextCheckAt(24 * 60, now), site.site_id)
+  ]);
+}
+
+export async function runDueMonitorRollups(env, { limit = 25 } = {}) {
+  const now = new Date().toISOString();
+  const rows = await env.GATEWAY_DB.prepare(
+    `SELECT s.* ${ACTIVE_CONTROL_SITES_FROM_WHERE} AND (s.next_rollup_at IS NULL OR s.next_rollup_at <= ?) ORDER BY COALESCE(s.next_rollup_at, s.created_at) LIMIT ?`
+  ).bind(now, now, now, now, Math.min(25, Math.max(1, Number(limit) || 10))).all();
+  const sites = rows?.results || [];
+  const settled = await Promise.allSettled(sites.map((site) => runSiteMonitorRollup(env, site)));
+  return { rolled: sites.length, failed: settled.filter((item) => item.status === "rejected").length };
+}
+
+// platform_monitor_runs is capped at the last 1000 rows/site (~3.5 days at
+// the 5-minute cron cadence), so any report window beyond that would
+// silently under-count without the daily rollup. Combine rolled-up history
+// (accurate, unbounded) with today's still-unrolled raw runs (freshness) --
+// the rollup only ever covers up to yesterday, so there's no overlap to
+// double-count.
 export async function siteReport(env, siteId, days = 30) {
   const boundedDays = Math.min(90, Math.max(1, Number(days) || 30));
-  const since = new Date(Date.now() - boundedDays * 24 * 60 * 60 * 1000).toISOString();
-  const [runs, receipts, incidents] = await Promise.all([
+  const since = new Date(Date.now() - boundedDays * 24 * 60 * 60 * 1000);
+  const sinceDay = since.toISOString().slice(0, 10);
+  const todayStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+  const [rollup, todayRuns, receipts, incidents, site] = await Promise.all([
+    env.GATEWAY_DB.prepare(
+      "SELECT SUM(checks) AS checks, SUM(page_ok_count) AS page_ok_count, SUM(checks * avg_latency_ms) AS latency_weighted FROM platform_monitor_daily WHERE site_id = ? AND day >= ?"
+    ).bind(siteId, sinceDay).first(),
     env.GATEWAY_DB.prepare(
       "SELECT COUNT(*) AS checks, SUM(page_ok) AS page_ok_count, AVG(latency_ms) AS average_latency FROM platform_monitor_runs WHERE site_id = ? AND checked_at >= ?"
-    ).bind(siteId, since).first(),
+    ).bind(siteId, todayStart).first(),
     env.GATEWAY_DB.prepare(
       "SELECT COUNT(*) AS count FROM platform_form_receipts WHERE site_id = ? AND received_at >= ?"
-    ).bind(siteId, since).first(),
+    ).bind(siteId, since.toISOString()).first(),
     env.GATEWAY_DB.prepare(
       "SELECT COUNT(*) AS count FROM platform_incidents WHERE site_id = ? AND opened_at >= ?"
-    ).bind(siteId, since).first()
+    ).bind(siteId, since.toISOString()).first(),
+    env.GATEWAY_DB.prepare("SELECT domain_expires_at, domain_registrar, domain_check_error FROM platform_sites WHERE site_id = ?").bind(siteId).first()
   ]);
-  const checks = Number(runs?.checks || 0);
-  const ok = Number(runs?.page_ok_count || 0);
+  const checks = Number(rollup?.checks || 0) + Number(todayRuns?.checks || 0);
+  const ok = Number(rollup?.page_ok_count || 0) + Number(todayRuns?.page_ok_count || 0);
+  const latencySum = Number(rollup?.latency_weighted || 0) + Number(todayRuns?.checks || 0) * Number(todayRuns?.average_latency || 0);
   return {
     days: boundedDays,
     checks,
     uptimePercent: checks ? Number(((ok / checks) * 100).toFixed(2)) : 100,
-    averageLatencyMs: Math.round(Number(runs?.average_latency || 0)),
+    averageLatencyMs: checks ? Math.round(latencySum / checks) : 0,
     formSignals: Number(receipts?.count || 0),
-    incidents: Number(incidents?.count || 0)
+    incidents: Number(incidents?.count || 0),
+    domainExpiresAt: site?.domain_expires_at || null,
+    domainRegistrar: site?.domain_registrar || null,
+    domainCheckError: site?.domain_check_error || null
   };
 }
 

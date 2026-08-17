@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildDigestSummary, computeHealthScore, diagnosePage, extractEditableInventory, scanSiteInventory } from "../gateway/src/platform-monitor.js";
+import { buildContentFields, buildDigestSummary, checkDomainExpiry, computeHealthScore, diagnosePage, extractEditableInventory, scanSiteInventory } from "../gateway/src/platform-monitor.js";
 
 test("diagnostics report observable SEO, accessibility and mixed-content facts", () => {
   const html = `<!doctype html><html><head><title>Коротко</title><meta name="robots" content="noindex"><link rel="canonical" href="https://example.com/"></head><body><h1>Первый</h1><h1>Второй</h1><img src="https://example.com/photo.jpg"><script src="http://old.example.com/widget.js"></script></body></html>`;
@@ -58,4 +58,51 @@ test("a week with incidents and findings reports what was found without hiding i
   assert.match(busy, /Обнаружено проблем с доступностью: 1, устранено: 1/u);
   assert.match(busy, /нашла 3 момент/u);
   assert.match(busy, /82 \(-8\)/u);
+});
+
+test("a page with no privacy link, form without consent and no cookie banner fails all three legal checks", () => {
+  const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Главная страница сайта</title><meta name="description" content="Описание страницы длиной более двадцати символов"><meta property="og:title" content="x"><meta property="og:image" content="y"><link rel="icon" href="/favicon.ico"></head><body><h1>Привет</h1><form><input name="phone"><button>Отправить</button></form></body></html>`;
+  const result = diagnosePage(html, "https://example.com/");
+  const legalIds = result.issues.filter((issue) => issue.category === "legal").map((issue) => issue.issueId);
+  assert.ok(legalIds.some((id) => id.startsWith("legal-privacy-link:")));
+  assert.ok(legalIds.some((id) => id.startsWith("legal-consent-form:")));
+  assert.ok(legalIds.some((id) => id.startsWith("legal-cookie-banner:")));
+  assert.equal(result.facts.hasPrivacyLink, false);
+});
+
+test("a page with a privacy link, consent text and a cookie banner passes all three legal checks", () => {
+  const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Главная страница сайта</title><meta name="description" content="Описание страницы длиной более двадцати символов"><meta property="og:title" content="x"><meta property="og:image" content="y"><link rel="icon" href="/favicon.ico"></head><body><h1>Привет</h1><a href="/privacy">Политика конфиденциальности</a><form><input name="phone"><label>Я согласен на обработку персональных данных</label><button>Отправить</button></form><div class="cookie-consent">Мы используем файлы cookie</div></body></html>`;
+  const result = diagnosePage(html, "https://example.com/");
+  const legalIds = result.issues.filter((issue) => issue.category === "legal").map((issue) => issue.issueId);
+  assert.deepEqual(legalIds, []);
+  assert.equal(result.facts.hasPrivacyLink, true);
+});
+
+test("buildContentFields extracts stable, content-independent slot keys for phones and buttons", () => {
+  const inventory = {
+    pages: [{ url: "https://x.test/", path: "/", title: "Главная", schedules: ["Пн-Пт 9:00-18:00"] }],
+    diagnostics: { pageFacts: [{ url: "https://x.test/", path: "/", title: "Главная", description: "Описание", h1: ["Заголовок"] }] },
+    phoneCandidates: [{ pagePath: "/", pageTitle: "Главная", blockId: "rec100", matchIndex: 0, phone: "+7 (495) 000-00-00", sectionLabel: "Шапка" }],
+    candidates: [{ pagePath: "/", pageTitle: "Главная", blockId: "rec200", matchIndex: 0, text: "Заказать звонок", url: "https://x.test/#form", sectionLabel: "Главный экран" }]
+  };
+  const fields = buildContentFields(inventory);
+  assert.equal(fields.size, 7);
+  assert.equal(fields.get("/|phone|rec100|0").value, "+7 (495) 000-00-00");
+  assert.equal(fields.get("/|button_text|rec200|0").value, "Заказать звонок");
+  assert.equal(fields.get("/|schedule|0").value, "Пн-Пт 9:00-18:00");
+  // The slot key must survive a value change so a diff sees "same slot,
+  // different value" instead of two unrelated candidates.
+  inventory.phoneCandidates[0].phone = "+7 (495) 111-11-11";
+  const updated = buildContentFields(inventory);
+  assert.equal(updated.get("/|phone|rec100|0").value, "+7 (495) 111-11-11");
+});
+
+test("checkDomainExpiry parses the RDAP expiration event and treats a non-2xx response as failure", async () => {
+  const ok = await checkDomainExpiry("example.com", async () => ({
+    ok: true,
+    json: async () => ({ ldhName: "EXAMPLE.COM", events: [{ eventAction: "registration", eventDate: "2010-01-01T00:00:00Z" }, { eventAction: "expiration", eventDate: "2027-01-01T00:00:00Z" }] })
+  }));
+  assert.equal(ok.expiresAt, "2027-01-01T00:00:00.000Z");
+  assert.equal(ok.registrar, "EXAMPLE.COM");
+  await assert.rejects(() => checkDomainExpiry("nonexistent.test", async () => ({ ok: false, status: 404 })));
 });
