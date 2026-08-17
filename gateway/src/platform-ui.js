@@ -344,7 +344,7 @@ export function platformHtml(nonce) {
       const contentChangesSection='<section class="card"><div class="card-head"><div><h2>Журнал изменений сайта</h2><p>Правки, внесённые напрямую в Tilda — отдельно от изменений через SiteCare</p></div></div>'+contentChangeRows+'</section>';
       const diagnostics='<section class="card editor-side"><div class="card-head"><div><h2>Состояние сайта</h2><p>'+h(cardSubtitle)+'</p></div>'+(diagnosticsRan&&issues.length?'<div class="row wrap"><span class="pill bad" title="Количество найденных замечаний">'+issues.length+' '+(issues.length===1?'замечание':issues.length<5?'замечания':'замечаний')+'</span></div>':'')+'</div>'+compactStatuses+diagnosticsPanel+'</section>'+legalSection+compactHistory+contentChangesSection;
       const supportEditor=operatorPreviewAccountId?'<div class="banner info"><div><b>Редактор поддержки</b><span>Правки для клиента вы готовите через чат-помощника (значок справа внизу). В его чат попадут только сообщения, которые вы отправите сами.</span></div></div>':'';
-      $('view').innerHTML=pageHead('Диагностика',operatorPreviewAccountId?'Рабочее место поддержки':'Состояние сайта','Проверки и понятные причины — открытые вопросы решает помощник в чате справа.')+supportEditor+monthlyReportSection+'<div class="editor-stack diagnostics-only">'+diagnostics+'</div>'
+      $('view').innerHTML=pageHead('Диагностика',operatorPreviewAccountId?'Рабочее место поддержки':'Состояние сайта','Проверки и понятные причины — открытые вопросы решает помощник в чате справа.')+supportEditor+'<div class="editor-stack diagnostics-only">'+monthlyReportSection+diagnostics+'</div>'
     };
 
     function renderChatWidget(){

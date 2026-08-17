@@ -471,6 +471,69 @@ function capabilityAnswer() {
   return assistantResult({ type: "advice", kind: "advice", message: lines.join("\n") });
 }
 
+// The assistant's own diagnostics answers end with "спросите" (ask me more),
+// so the single most predictable next message is a follow-up about one of
+// the specific findings it just listed ("what length should the title be?").
+// Answering that with the generic AI fallback breaks the promise the
+// assistant itself just made. These are static facts about the checks
+// diagnosePage() actually runs, not AI-generated, so they're always
+// available regardless of AI provider status.
+const EXPLAIN_TOPICS = [
+  {
+    keywords: [/заголов.*(?:символ|длин)/iu, /(?:длин|символ).*заголов/iu, /title.*(?:длин|символ)/iu],
+    answer: "Заголовок страницы (тег title) помечается как «нетипичной длины», если он короче 15 или длиннее 65 символов. Оптимально — около 50–60 символов: достаточно, чтобы описать страницу, и не обрежется в поисковой выдаче."
+  },
+  {
+    keywords: [/описани.*(?:символ|длин)/iu, /(?:длин|символ).*описани/iu, /description.*(?:длин|символ)/iu],
+    answer: "Оптимальная длина meta description — примерно 120–160 символов. На позиции в поиске он не влияет напрямую, но именно его пользователь видит в сниппете под ссылкой — стоит сделать его понятным и привлекательным."
+  },
+  {
+    keywords: [/\bh1\b/iu, /главны[йх]\s+заголов/iu],
+    answer: "H1 — это главный заголовок страницы, который поисковики и посетители используют, чтобы понять её основную тему. На странице должен быть ровно один H1 — не ноль и не несколько."
+  },
+  {
+    keywords: [/\balt\b/iu, /изображени.*описани/iu, /картинк.*(?:описани|alt)/iu],
+    answer: "Alt-текст — это текстовое описание картинки для тех, кто её не видит: незрячих пользователей со экранным диктором и поисковых роботов. Пишите коротко и по смыслу («доставка заказов по Москве»), а не «картинка1». Чисто декоративные изображения можно оставить без alt."
+  },
+  {
+    keywords: [/смешанн.*контент/iu, /небезопасн.*ресурс/iu, /http:\/\//iu],
+    answer: "Если страница открывается по https, а какой-то файл на ней (скрипт, картинка) загружается по обычному http — браузер может заблокировать его или показать предупреждение о незащищённом соединении. Нужно заменить такие адреса на https."
+  },
+  {
+    keywords: [/canonical/iu, /каноническ/iu],
+    answer: "rel=canonical — это подсказка поисковику, какой адрес страницы считать основным, если она доступна по нескольким URL (например, с параметрами и без). Без него один и тот же контент может конкурировать сам с собой в поиске."
+  },
+  {
+    keywords: [/og:(?:title|image)/iu, /превью.*(?:соцсет|ссылк)/iu, /соцсет.*превью/iu],
+    answer: "Поля og:title и og:image определяют, как ссылка на сайт выглядит при репосте в соцсетях и мессенджерах — заголовок и картинка превью. Без них площадка обычно подставляет что-то произвольное."
+  },
+  {
+    keywords: [/favicon/iu, /иконк.*сайт/iu],
+    answer: "Favicon — маленькая иконка сайта, которая показывается на вкладке браузера и в закладках. Добавляется в настройках проекта."
+  },
+  {
+    keywords: [/кодировк/iu, /charset/iu],
+    answer: "Кодировка страницы (meta charset) — техническая настройка, которая обычно выставляется автоматически. Без неё браузер может неправильно отобразить русские буквы вместо текста."
+  },
+  {
+    keywords: [/скорост.*(?:сайт|ответ|загруз)/iu, /медленно\s+(?:открыва|загруж|отвеча)/iu, /долго\s+(?:открыва|загруж)/iu],
+    answer: "Больше 2.5 секунд на ответ сервера уже заметно посетителю, больше 5 секунд — многие уходят, не дождавшись загрузки. Замер может колебаться от раза к разу — если задержка повторяется стабильно, стоит проверить тяжёлые скрипты и внешние сервисы на странице."
+  },
+  {
+    keywords: [/конфиденциальност/iu, /персональных\s+данных/iu, /152[\s-]?фз/iu],
+    answer: "По 152-ФЗ сайт, который собирает персональные данные (например, через форму заявки), должен ссылаться на политику обработки персональных данных и получать согласие пользователя рядом с формой. Это снижает юридический риск для вас как для владельца сайта."
+  },
+  {
+    keywords: [/\bcookie\b/iu, /куки/iu],
+    answer: "Уведомление о cookie — баннер, который предупреждает посетителя, что сайт сохраняет технические данные (cookie) в его браузере. Это стандартная практика, которая снижает юридические риски."
+  }
+];
+
+function explainTopicAnswer(prompt) {
+  const topic = EXPLAIN_TOPICS.find((item) => item.keywords.some((re) => re.test(prompt)));
+  return topic ? assistantResult({ type: "advice", kind: "advice", message: topic.answer }) : null;
+}
+
 function localAssistantAnswer(prompt, siteContext) {
   if (HANDOFF_PATTERNS.some((re) => re.test(prompt))) {
     return assistantResult({
@@ -491,6 +554,8 @@ function localAssistantAnswer(prompt, siteContext) {
   if (SEO_PATTERNS.some((re) => re.test(prompt))) {
     return assistantResult({ type: "advice", kind: "advice", message: diagnosticsAnswer(prompt, siteContext) });
   }
+  const explained = explainTopicAnswer(prompt);
+  if (explained) return explained;
   return null;
 }
 
