@@ -52,6 +52,23 @@ export function safeText(value, maximum = 220) {
     .slice(0, maximum);
 }
 
+// Same safety guarantees as safeText (strips control chars and <>, caps
+// length) but keeps single newlines, so bulleted assistant answers
+// stay bulleted after a round trip through D1 -- safeText's blanket
+// \s+ -> " " collapse was flattening every multi-line chat message into
+// one paragraph the moment it was persisted, no matter how carefully
+// the message was built upstream.
+export function safeMessageText(value, maximum = 1600) {
+  return String(value || "")
+    .replace(/\r\n?/gu, "\n")
+    .replace(/[\u0000-\u0009\u000B\u000C\u000E-\u001F\u007F<>]/gu, " ")
+    .replace(/[^\S\n]+/gu, " ")
+    .split("\n").map((line) => line.trim()).join("\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim()
+    .slice(0, maximum);
+}
+
 export function normalizeEmail(value) {
   const email = String(value || "").trim().toLocaleLowerCase("en-US");
   if (email.length < 5 || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/u.test(email)) {

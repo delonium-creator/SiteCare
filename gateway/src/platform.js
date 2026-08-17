@@ -30,6 +30,7 @@ import {
   randomToken,
   readCookie,
   roleAllows,
+  safeMessageText,
   safeText,
   sessionCookie,
   siteSlug,
@@ -1227,7 +1228,7 @@ async function appendQuickExchange(request, env, user, siteId) {
   await enforceActionLimit(env, `quick-exchange:${user.user_id}:${siteId}`, 30, 300);
   const body = await requestJson(request);
   const userText = safeText(body.userText, 300);
-  const aiText = safeText(body.aiText, 4000);
+  const aiText = safeMessageText(body.aiText, 4000);
   if (!userText || !aiText) fail("Некорректное сообщение.");
   const conversation = await conversationForSite(env, user, site);
   await appendConversationMessage(env, conversation.conversation_id, { authorType: "client", authorUserId: user.user_id, content: userText });

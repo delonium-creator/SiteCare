@@ -1,4 +1,4 @@
-import { safeText } from "./platform-core.js";
+import { safeText, safeMessageText } from "./platform-core.js";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_OPENAI_MODEL = "gpt-5-mini";
@@ -111,7 +111,7 @@ function normalizedResult(payload, model) {
   const kinds = new Set(["none", "phone", "schedule", "button_text", "button_url"]);
   const mode = modes.has(String(parsed.mode)) ? String(parsed.mode) : "clarification";
   const changeKind = kinds.has(String(parsed.change_kind)) ? String(parsed.change_kind) : "none";
-  const reply = safeText(parsed.reply, 1600);
+  const reply = safeMessageText(parsed.reply, 1600);
   if (!reply) throw new Error("OPENAI_INVALID_RESPONSE");
   return {
     reply,

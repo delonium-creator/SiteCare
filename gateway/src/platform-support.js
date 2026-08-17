@@ -1,4 +1,4 @@
-import { newId, safeText } from "./platform-core.js";
+import { newId, safeText, safeMessageText } from "./platform-core.js";
 import { decryptProtectedJson, encryptProtectedJson } from "./platform-leads.js";
 
 const OPEN_SUPPORT_STATUSES = new Set(["new", "active", "waiting_client"]);
@@ -14,7 +14,7 @@ function supportError(message, status = 400, code = "SUPPORT_ERROR") {
 }
 
 function normalizedContent(value, maximum = 1600) {
-  const content = safeText(value, maximum);
+  const content = safeMessageText(value, maximum);
   if (!content) throw supportError("Напишите сообщение.");
   return content;
 }
