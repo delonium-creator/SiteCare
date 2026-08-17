@@ -576,13 +576,21 @@ export function platformHtml(nonce) {
       toast('Изменение сохранено, но сайт ещё не подтвердил результат. Откройте опубликованную страницу и обновите её.');
     }
 
-    function injectQuickAnswer(userText,aiText){
+    async function injectQuickAnswer(userText,aiText){
       const s=site();if(!s)return;
       if(!s._conversation)s._conversation={messages:[],supportRequest:null};
       const now=new Date().toISOString();
       s._conversation.messages=[...(s._conversation.messages||[]),{role:'client',content:userText,createdAt:now},{role:'ai',content:aiText,createdAt:now}];
       s._conversation.updatedAt=now;
       render();
+      // Quick actions answer instantly without the /assistant round trip, but
+      // that means this exchange only exists in local state until it's saved
+      // here -- without this, the next real message overwrites s._conversation
+      // with the server's snapshot and this exchange visibly disappears.
+      try{
+        const result=await api('/v1/platform/sites/'+encodeURIComponent(siteId)+'/conversation/quick',{method:'POST',body:JSON.stringify({userText,aiText})});
+        const selected=site();if(selected&&selected.site_id===s.site_id)selected._conversation=result.conversation;
+      }catch{}
     }
     async function handleQuickAction(kind,button){
       const s=site();if(!s)return;

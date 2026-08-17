@@ -1215,6 +1215,26 @@ async function conversationState(env, user, siteId) {
   return json({ ok: true, conversation: clientConversation(await conversationSnapshot(env, conversation.conversation_id)) });
 }
 
+// The client's quick-action buttons (status check, SEO summary, etc.) answer
+// deterministically without a round trip through the AI pipeline -- but if
+// that exchange only lives in local client state, the next real /assistant
+// call overwrites the client's conversation with the server's snapshot and
+// the quick-action exchange visibly vanishes, since it was never persisted.
+// Same author/append machinery as a normal message, just without the AI
+// pipeline behind it.
+async function appendQuickExchange(request, env, user, siteId) {
+  const { site } = await siteAccess(env, user, siteId, "manager");
+  await enforceActionLimit(env, `quick-exchange:${user.user_id}:${siteId}`, 30, 300);
+  const body = await requestJson(request);
+  const userText = safeText(body.userText, 300);
+  const aiText = safeText(body.aiText, 4000);
+  if (!userText || !aiText) fail("Некорректное сообщение.");
+  const conversation = await conversationForSite(env, user, site);
+  await appendConversationMessage(env, conversation.conversation_id, { authorType: "client", authorUserId: user.user_id, content: userText });
+  await appendConversationMessage(env, conversation.conversation_id, { authorType: "ai", content: aiText, metadata: { kind: "advice", local: true } });
+  return json({ ok: true, conversation: clientConversation(await conversationSnapshot(env, conversation.conversation_id)) });
+}
+
 function clientConversation(snapshot) {
   return {
     ...snapshot,
@@ -2774,9 +2794,10 @@ export async function handlePlatformRoute(request, env, path) {
   if (request.method === "POST" && match) return rollbackOverrides(request, env, user, match[1]);
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/review-sources$/u.exec(path);
   if (request.method === "POST" && match) return updateReviewSources(request, env, user, match[1]);
-  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(conversation|support)$/u.exec(path);
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(conversation|conversation\/quick|support)$/u.exec(path);
   if (match) {
     if (request.method === "GET" && match[2] === "conversation") return conversationState(env, user, match[1]);
+    if (request.method === "POST" && match[2] === "conversation/quick") return appendQuickExchange(request, env, user, match[1]);
     if (request.method === "POST" && match[2] === "support") return siteSupportAction(request, env, user, match[1]);
   }
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(inventory|assistant|assistant\/locate-phone|selection|changes\/apply)$/u.exec(path);
