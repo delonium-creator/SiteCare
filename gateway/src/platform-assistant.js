@@ -402,21 +402,21 @@ function issueWord(count) {
 function siteStatusAnswer(siteContext) {
   const status = siteContext?.currentStatus || {};
   const webhookReady = !status.formsRequired || (status.webhookVerified && status.testLeadVerified);
-  const parts = [
-    status.pageAvailable ? "сайт открывается" : "сайт сейчас не открывается",
-    webhookReady ? "заявки подключены" : "приём заявок ещё не настроен",
-    status.telegramConnected ? "Telegram подключён" : "Telegram не подключён"
+  const lines = [
+    `${status.pageAvailable ? "✓" : "!"} Сайт ${status.pageAvailable ? "открывается" : "сейчас не открывается"}`,
+    `${webhookReady ? "✓" : "!"} ${webhookReady ? "Заявки подключены" : "Приём заявок ещё не настроен"}`,
+    `${status.telegramConnected ? "✓" : "!"} Telegram ${status.telegramConnected ? "подключён" : "не подключён"}`
   ];
-  return `Проверил: ${parts.join(", ")}.`;
+  return `Проверил сайт — вот что нашёл:\n\n${lines.join("\n")}`;
 }
 
 function diagnosticsAnswer(prompt, siteContext) {
   const onlyCategory = /\bseo\b|поискову/iu.test(prompt) ? "seo" : null;
   const issues = (siteContext?.diagnostics?.issues || []).filter((item) => !onlyCategory || item.category === onlyCategory);
-  const label = onlyCategory ? categoryLabel(onlyCategory) + "-" : "";
   if (!issues.length) return `${onlyCategory ? categoryLabel(onlyCategory) + "-замечаний" : "Критических замечаний"} не нашёл — с этой стороны сайт в порядке.`;
-  const shown = issues.slice(0, 6).map((item) => item.title).join("; ");
-  return `Нашёл ${issues.length} ${label}${issueWord(issues.length)}: ${shown}${issues.length > 6 ? "…" : ""}.`;
+  const label = onlyCategory ? categoryLabel(onlyCategory) + "-" : "";
+  const lines = issues.slice(0, 6).map((item) => `• ${item.title}`);
+  return `Нашёл ${issues.length} ${label}${issueWord(issues.length)}, которые стоит поправить:\n\n${lines.join("\n")}${issues.length > 6 ? "\n…" : ""}\n\nМогу разобрать любой пункт подробнее — просто спросите.`;
 }
 
 function leadsAnswer(siteContext) {
@@ -424,7 +424,7 @@ function leadsAnswer(siteContext) {
   if (!status.formsRequired) return "На подключённой странице пока не найдена обязательная форма заявки.";
   const webhookReady = status.webhookVerified && status.testLeadVerified;
   return webhookReady
-    ? "Приём заявок подключён и подтверждён — технических причин для сбоя не вижу. Если заявки всё равно не приходят, проверьте, что форма опубликована на сайте и её адрес не менялся."
+    ? "Приём заявок подключён и подтверждён — технических причин для сбоя не вижу.\n\nЕсли заявки всё равно не приходят, проверьте:\n• форма опубликована на сайте\n• адрес формы не менялся недавно"
     : "Приём заявок ещё не подтверждён — нужно проверить Webhook формы в настройках подключения.";
 }
 
@@ -433,7 +433,8 @@ const CAPABILITY_PATTERNS = [
   /как\s+ты\s+можешь\s+помо/iu, /как(?:\s+ты)?\s+это\s+работает/iu, /как\s+ты\s+работаешь/iu,
   /какие\s+у\s+тебя\s+функци/iu, /для\s+чего\s+ты/iu, /расскажи\s+о\s+себе/iu, /^кто\s+ты(?:\s|\?|$)/iu,
   /что\s+ты\s+за\s+помощник/iu, /что\s+ты\s+такое/iu, /что\s+ты\s+делаешь/iu, /твои\s+возможности/iu,
-  /список\s+команд/iu, /что\s+ты\s+знаешь/iu, /каким\s+образом\s+ты/iu
+  /список\s+команд/iu, /что\s+ты\s+знаешь/iu, /каким\s+образом\s+ты/iu,
+  /доступны?\s+команд/iu, /список\s+вопрос/iu, /какие\s+вопросы\s+можно/iu
 ];
 
 const STATUS_PATTERNS = [
@@ -455,12 +456,19 @@ const HANDOFF_PATTERNS = [
 ];
 
 function capabilityAnswer() {
-  return assistantResult({
-    type: "advice",
-    kind: "advice",
-    message: "Вот что я умею: проверить, открывается ли сайт и подключены ли заявки; показать найденные SEO и технические замечания; объяснить, почему могут не приходить заявки; и подготовить безопасную правку — телефон, график работы, текст или ссылку кнопки. Перед изменением сайта я всегда сначала покажу, что именно поменяется, и попрошу подтверждение. Если задача сложнее — соединю со специалистом поддержки.",
-    suggestions: ["Проверь состояние сайта", "Проведи SEO-диагностику", "Что можно улучшить?", "Почему могут не приходить заявки?"]
-  });
+  const lines = [
+    "Вот что я умею — просто спросите:",
+    "",
+    "• «Проверь состояние сайта» — открывается ли сайт, подключены ли заявки и Telegram",
+    "• «Проведи SEO-диагностику» — найду технические и поисковые ошибки",
+    "• «Что можно улучшить?» — полный список замечаний по всем категориям",
+    "• «Почему могут не приходить заявки?» — разберу причину и подскажу, что проверить",
+    "• «Позови специалиста поддержки» — подключу живого человека, если нужно",
+    "• Могу безопасно поменять телефон, график работы, текст или ссылку кнопки — сначала покажу, что изменится, и попрошу подтверждение",
+    "",
+    "Спрашивайте своими словами — я разберусь. Слежу за сайтом даже тогда, когда вы не смотрите."
+  ];
+  return assistantResult({ type: "advice", kind: "advice", message: lines.join("\n") });
 }
 
 function localAssistantAnswer(prompt, siteContext) {

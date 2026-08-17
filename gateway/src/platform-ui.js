@@ -131,9 +131,9 @@ export function platformHtml(nonce) {
     .chat-widget .editor-chat-panel{margin:0;border:0;border-radius:0;box-shadow:none;background:#fff;flex:1;min-height:0;display:flex;flex-direction:column;padding:0}
     .chat-widget .chat-panel-head{display:none}
     .chat-widget .assistant-chat{flex:1;min-height:0;max-height:none;overflow-y:auto;overflow-x:hidden;scroll-behavior:auto}
-    .chat-widget .chat-suggestions{flex-wrap:nowrap;overflow-x:auto;padding:8px 14px 0;gap:6px}
+    .chat-widget .chat-suggestions{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;padding:8px 14px 0;gap:6px;flex-shrink:0}
     .chat-widget .chat-suggestions button{flex:0 0 auto;white-space:nowrap;font-size:11px;padding:6px 10px;min-height:auto}
-    .chat-widget .chat-composer{margin:10px 14px 12px}
+    .chat-widget .chat-composer{margin:10px 14px 12px;flex-shrink:0}
     .chat-widget .chat-send{min-width:auto;padding:0 15px}
     .chat-widget .chat-send span{display:none}
     .chat-widget .composer-hint{display:none}
