@@ -97,8 +97,9 @@ test("combined client workspace and support shell keep one accessible control st
   assert.doesNotMatch(html, /Индекс здоровья/u);
   assert.match(html, /Запустить диагностику/u);
   assert.match(html, /data-action="run-diagnostics"/u);
-  assert.ok(html.indexOf('id="sidebarToggle"') < html.indexOf('id="clientNav"'));
+  assert.match(html, /workspace-leading"><button id="sidebarToggle"/u);
   assert.doesNotMatch(html, /side-foot"><button id="sidebarToggle"/u);
+  assert.doesNotMatch(html, /nav-toolbar"><div class="nav-label">Кабинет<\/div><button id="sidebarToggle"/u);
   assert.match(html, /slice\(0,6\)/u);
   assert.match(html, /Поддержка SiteCare/u);
   assert.match(html, /filter\(row=>row\.role!==['"]system['"]\)/u);
