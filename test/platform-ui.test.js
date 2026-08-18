@@ -101,8 +101,13 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /Проведи SEO-диагностику/u);
   assert.match(html, /class="chat-widget-head"/u);
   assert.doesNotMatch(html, /Индекс здоровья/u);
-  assert.match(html, /Запустить диагностику/u);
+  assert.match(html, /Запустить проверку/u);
   assert.match(html, /data-action="run-diagnostics"/u);
+  assert.match(html, /Найденные проблемы/u);
+  assert.match(html, /Рекомендации помощника/u);
+  assert.match(html, /Сводка проверки/u);
+  assert.match(html, /diagnostics-cta inverted/u);
+  assert.match(html, /data-action="issue-detail"/u);
   assert.match(html, /workspace-leading"><button id="sidebarToggle"/u);
   assert.doesNotMatch(html, /side-foot"><button id="sidebarToggle"/u);
   assert.doesNotMatch(html, /nav-toolbar"><div class="nav-label">Кабинет<\/div><button id="sidebarToggle"/u);
