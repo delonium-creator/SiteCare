@@ -1094,6 +1094,22 @@ async function siteContentChanges(env, user, siteId) {
   return json({ ok: true, changes: rows?.results || [] });
 }
 
+async function siteIncidents(env, user, siteId, limit = 10) {
+  await siteAccess(env, user, siteId, "viewer");
+  const rows = await env.GATEWAY_DB.prepare(
+    "SELECT incident_id, kind, status, summary, opened_at, resolved_at FROM platform_incidents WHERE site_id = ? ORDER BY opened_at DESC LIMIT ?"
+  ).bind(siteId, Math.min(50, Math.max(1, limit))).all();
+  return json({ ok: true, incidents: rows?.results || [] });
+}
+
+async function siteHealthHistory(env, user, siteId, limit = 10) {
+  await siteAccess(env, user, siteId, "viewer");
+  const rows = await env.GATEWAY_DB.prepare(
+    "SELECT checked_at, score, high, medium, low, issue_count FROM platform_health_history WHERE site_id = ? ORDER BY checked_at DESC LIMIT ?"
+  ).bind(siteId, Math.min(50, Math.max(1, limit))).all();
+  return json({ ok: true, history: rows?.results || [] });
+}
+
 async function requireCompletedIntegration(env, site) {
   const inspection = await inspectSite(site);
   const checkedAt = new Date().toISOString();
@@ -2775,7 +2791,7 @@ export async function handlePlatformRoute(request, env, path) {
 
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})$/u.exec(path);
   if (request.method === "PATCH" && match) return updateSite(request, env, user, match[1]);
-  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(check|integration|report|content-changes)$/u.exec(path);
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(check|integration|report|content-changes|incidents|health-history)$/u.exec(path);
   if (match) {
     if (request.method === "POST" && match[2] === "check") return checkOneSite(env, user, match[1]);
     if (request.method === "GET" && match[2] === "integration") return integration(request, env, user, match[1]);
@@ -2784,6 +2800,12 @@ export async function handlePlatformRoute(request, env, path) {
       return json({ ok: true, ...(await siteReport(env, match[1], Number(new URL(request.url).searchParams.get("days") || 30))) });
     }
     if (request.method === "GET" && match[2] === "content-changes") return siteContentChanges(env, user, match[1]);
+    if (request.method === "GET" && match[2] === "incidents") {
+      return siteIncidents(env, user, match[1], Number(new URL(request.url).searchParams.get("limit") || 10));
+    }
+    if (request.method === "GET" && match[2] === "health-history") {
+      return siteHealthHistory(env, user, match[1], Number(new URL(request.url).searchParams.get("limit") || 10));
+    }
   }
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/webhook\/rotate$/u.exec(path);
   if (request.method === "POST" && match) return rotateWebhook(request, env, user, match[1]);
