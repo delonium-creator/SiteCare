@@ -658,7 +658,7 @@ export async function scanSiteInventory(site, fetchImpl = fetch, { maxPages = 40
         low: severityCounts.low,
         categories: categoryCounts,
         categoryScores: Object.fromEntries(
-          ["seo", "performance", "mobile", "security"].map((category) => [
+          ["seo", "content", "accessibility", "mobile", "security", "performance", "social", "legal"].map((category) => [
             category,
             computeHealthScore(categorySeverityCounts(diagnosticIssues, category))
           ])

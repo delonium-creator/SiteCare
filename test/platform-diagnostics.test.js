@@ -35,7 +35,7 @@ test("whole-site scan aggregates duplicate metadata and failed internal pages", 
   assert.ok(result.diagnostics.issues.some((issue) => issue.issueId.startsWith("duplicate-title:")));
   assert.ok(result.diagnostics.issues.some((issue) => issue.category === "availability"));
   const { categoryScores } = result.diagnostics.summary;
-  assert.deepEqual(Object.keys(categoryScores).sort(), ["mobile", "performance", "security", "seo"]);
+  assert.deepEqual(Object.keys(categoryScores).sort(), ["accessibility", "content", "legal", "mobile", "performance", "security", "seo", "social"]);
   for (const score of Object.values(categoryScores)) assert.ok(score >= 0 && score <= 100);
 });
 
