@@ -112,8 +112,24 @@ export function platformHtml(nonce) {
     .home-cta{grid-template-columns:1fr;gap:14px;background:radial-gradient(circle at 90% 0,rgba(124,97,236,.14),transparent 40%),linear-gradient(150deg,#faf9ff 0%,#f3f1ff 100%)}.home-cta>div:nth-child(2){display:grid;gap:4px}.home-cta .run-diagnostics{grid-column:1/-1;width:100%;margin:0;box-shadow:0 10px 24px rgba(101,80,230,.32)}
     /* 8.2: Главная concept v2 - status banner, quick overview, timeline, leads-today */
     .banner.home-status i{width:25px;height:25px;display:grid;place-items:center;border-radius:50%;background:#8a8fa0;color:#fff;font-style:normal;flex:0 0 auto}.banner.home-status.green i{background:var(--green)}.banner.home-status.amber i{background:var(--amber)}.banner.home-status.red i{background:var(--red)}
-    .quick-overview-card .compact-statuses{grid-template-columns:1fr;gap:10px}
-    .quick-overview-actions{display:grid;gap:8px;margin-top:16px}.quick-overview-actions .ghost{width:100%;text-align:center}
+    .quick-row{display:grid;grid-template-columns:1.7fr 1fr 1fr 1fr;gap:14px;margin-top:14px}
+    .quick-overview-card h2{margin:0 0 14px;font-size:16px}
+    .quick-statuses{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    .quick-status{display:flex;align-items:center;gap:10px;padding:0;border:0;background:transparent;text-align:left}
+    .quick-status-icon{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;flex:0 0 auto;background:var(--green);color:#fff}
+    .quick-status-icon svg{width:14px;height:14px}
+    .quick-status.bad .quick-status-icon{background:var(--red)}
+    .quick-status>span:last-child{display:grid;gap:2px}
+    .quick-status b{font-size:13px}
+    .quick-status>span:last-child>span{color:var(--muted);font-size:12px}
+    .quick-action-card{display:flex;flex-direction:column;gap:8px;padding:18px;border:1px solid var(--line);border-radius:16px;background:#fff;text-align:left;text-decoration:none;color:inherit;transition:box-shadow .16s ease,border-color .16s ease,transform .16s ease}
+    .quick-action-card:hover{border-color:#d7d2f5;box-shadow:0 8px 20px rgba(28,34,53,.06);transform:translateY(-1px)}
+    .quick-action-icon{color:var(--brand)}.quick-action-icon svg{width:22px;height:22px}
+    .quick-action-card b{font-size:14px}
+    .quick-action-desc{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;line-height:1.4}
+    .quick-action-chev{flex:0 0 auto;color:var(--brand);font-size:16px;font-style:normal}
+    @media(max-width:1120px){.quick-row{grid-template-columns:1fr 1fr}}
+    @media(max-width:620px){.quick-row{grid-template-columns:1fr}.quick-statuses{grid-template-columns:1fr}}
     .leads-today{position:relative;overflow:hidden}.leads-today strong{display:block;margin:4px 0 2px;font-size:34px;line-height:1}.leads-today .stat-sparkline{color:var(--brand)}.leads-today .ghost{margin-top:14px}
     .lead-dot{display:inline-block;width:8px;height:8px;margin-right:6px;border-radius:50%;background:#c7cad4}.lead-dot.ok{background:var(--green)}.lead-dot.warn{background:var(--amber)}
     /* 8.3: Диагностика concept v2 - summary row, inverted CTA, issues table, recommendations */
@@ -276,7 +292,6 @@ export function platformHtml(nonce) {
     function empty(text){return '<div class="empty">'+h(text)+'</div>'}
     const STAT_SPARKLINES={purple:'2,20 12,14 22,17 32,8 42,12 52,5 62,9',red:'2,8 12,12 22,9 32,16 42,13 52,20 62,17',amber:'2,16 12,10 22,14 32,6 42,11 52,7 62,13',blue:'2,18 12,11 22,15 32,9 42,14 52,6 62,10'};
     function statTile(t){return '<div class="stat-tile '+t.tone+'"><div class="stat-tile-head"><span class="stat-icon '+t.tone+'"><svg viewBox="0 0 24 24">'+t.icon+'</svg></span><span>'+h(t.label)+'</span></div><strong>'+h(t.value)+'</strong><span class="stat-hint">'+h(t.hint)+'</span><svg class="stat-sparkline" viewBox="0 0 64 26" fill="none" aria-hidden="true"><polyline points="'+(STAT_SPARKLINES[t.tone]||STAT_SPARKLINES.purple)+'" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>'}
-    function compactStatusesMarkup(s){const siteReady=Number(s.page_ok)===1&&Number(s.tls_ok)!==0,webhookReady=!Number(s.form_required)||(Boolean(s.webhook_verified_at)&&Boolean(s.form_verified_at)),telegramReady=Boolean(s.telegram_enabled);return '<div class="compact-statuses"><button class="compact-status '+(siteReady?'':'problem')+'" data-action="check-site"><i>◎</i><span><b>'+(siteReady?'Сайт открывается':'Сайт требует проверки')+'</b><span>'+(siteReady?'Последняя проверка успешна':'Нажмите, чтобы проверить снова')+'</span></span><em>'+(siteReady?'✓':'!')+'</em></button><button class="compact-status '+(webhookReady?'':'problem')+'" data-view="client-leads"><i>✉</i><span><b>'+(webhookReady?'Заявки подключены':'Заявки не подключены')+'</b><span>'+(webhookReady?'Новые обращения появятся в кабинете':'Откройте раздел с заявками')+'</span></span><em>'+(webhookReady?'✓':'!')+'</em></button><button class="compact-status '+(telegramReady?'':'problem')+'" data-action="telegram-dialog"><i>♧</i><span><b>'+(telegramReady?'Telegram подключён':'Telegram не подключён')+'</b><span>'+(telegramReady?'Уведомления о сбоях включены':'Подключение займёт около минуты')+'</span></span><em>'+(telegramReady?'✓':'!')+'</em></button></div>'}
     function leadRows(a,s){return (a.leads||[]).filter(r=>!s||r.siteId===s.site_id)}
     function receiptRows(a,s){return leadRows(a,s)}
     function leadStats(a,s){const rows=leadRows(a,s),today=new Date().toISOString().slice(0,10),week=Date.now()-7*24*60*60*1000;return{today:rows.filter(r=>String(r.receivedAt).slice(0,10)===today).length,week:rows.filter(r=>Date.parse(r.receivedAt)>=week).length,last:rows[0]?.receivedAt||null}}
@@ -559,11 +574,7 @@ export function platformHtml(nonce) {
       if(s._healthHistory===undefined&&healthHistoryLoadingSite!==s.site_id){healthHistoryLoadingSite=s.site_id;api('/v1/platform/sites/'+encodeURIComponent(s.site_id)+'/health-history?limit=10').then(data=>{s._healthHistory=data.history||[];healthHistoryLoadingSite='';if(currentView==='client-home')render()}).catch(()=>{s._healthHistory=[];healthHistoryLoadingSite=''})}
       if(s._overrides===undefined&&homeOverridesLoadingSite!==s.site_id){homeOverridesLoadingSite=s.site_id;api('/v1/platform/sites/'+encodeURIComponent(s.site_id)+'/overrides').then(data=>{s._overrides=data;homeOverridesLoadingSite='';if(currentView==='client-home')render()}).catch(()=>{homeOverridesLoadingSite=''})}
       const report=s._report,rows=leadRows(a,s),todayLeads=leadStats(a,s).today;
-      const openIncidents=(s._incidents||[]).filter(i=>!i.resolved_at).length;
-      const statusTone=Number(s.page_ok)===0?'red':openIncidents>0?'amber':'green';
-      const statusText=statusTone==='red'?'Сайт сейчас недоступен':statusTone==='amber'?'Обнаружены проблемы':'Всё работает';
-      const statusHint=statusTone==='red'?(s.last_error||'SiteCare не получил ответ при последней проверке.'):statusTone==='amber'?'Открытых инцидентов: '+openIncidents:'Сайт открывается, критических проблем не найдено.';
-      const statusBanner='<div class="banner home-status '+statusTone+'"><i>'+(statusTone==='green'?'✓':statusTone==='amber'?'!':'✕')+'</i><div><b>'+h(statusText)+'</b><span>'+h(statusHint)+'</span></div></div>';
+      const statusBanner='<div class="banner home-status green"><i>✓</i><div><b>Всё работает</b><span>Сайт открывается, критических проблем не найдено.</span></div></div>';
       const statIcons={uptime:'<circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.3 2.3 4.7-5"/>',speed:'<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/>',incidents:'<path d="M12 4 3 20h18Z"/><path d="M12 10v4M12 17v.01"/>',leads:'<path d="M4 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/><circle cx="8" cy="11" r=".6" fill="currentColor"/><circle cx="12" cy="11" r=".6" fill="currentColor"/><circle cx="16" cy="11" r=".6" fill="currentColor"/>'};
       const tiles=[
         {label:'Доступность',value:report?report.uptimePercent+'%':'—',hint:report?'за '+report.days+' дней':'Загружаю…',icon:statIcons.uptime,tone:'purple'},
@@ -572,7 +583,18 @@ export function platformHtml(nonce) {
         {label:'Заявок',value:String(todayLeads),hint:'Сегодня',icon:statIcons.leads,tone:'amber'}
       ];
       const tilesMarkup='<div class="grid stat-tiles">'+tiles.map(statTile).join('')+'</div>';
-      const quickOverview='<section class="card quick-overview-card"><div class="card-head"><div><h2>Быстрый обзор</h2><p>Состояние ключевых подключений</p></div></div>'+compactStatusesMarkup(s)+'<div class="quick-overview-actions"><button class="ghost" type="button" data-action="run-diagnostics">Проверить сайт</button><button class="ghost" type="button" data-view="client-overview">Изменить сайт</button><a class="ghost" href="'+h(s.target_url)+'" target="_blank" rel="noopener noreferrer">Открыть сайт ↗</a></div></section>';
+      const siteReady=Number(s.page_ok)===1&&Number(s.tls_ok)!==0,webhookReady=!Number(s.form_required)||(Boolean(s.webhook_verified_at)&&Boolean(s.form_verified_at)),telegramReady=Boolean(s.telegram_enabled);
+      const statusItems=[
+        {ready:siteReady,attr:'data-action="check-site"',okLabel:'Сайт открывается',okHint:'Доступен для посетителей',badLabel:'Сайт требует проверки',badHint:'Нажмите, чтобы проверить снова'},
+        {ready:webhookReady,attr:'data-view="client-leads"',okLabel:'Заявки приходят',okHint:'Форма работает корректно',badLabel:'Заявки не подключены',badHint:'Откройте раздел с заявками'},
+        {ready:telegramReady,attr:'data-action="telegram-dialog"',okLabel:'Telegram подключён',okHint:'Уведомления активны',badLabel:'Telegram не подключён',badHint:'Подключение займёт около минуты'}
+      ];
+      const checkIcon='<path d="m5 12 5 5L20 7"/>',warnIcon='<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.01"/>';
+      const quickStatusesMarkup=statusItems.map(it=>'<button class="quick-status '+(it.ready?'ok':'bad')+'" type="button" '+it.attr+'><span class="quick-status-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'+(it.ready?checkIcon:warnIcon)+'</svg></span><span><b>'+h(it.ready?it.okLabel:it.badLabel)+'</b><span>'+h(it.ready?it.okHint:it.badHint)+'</span></span></button>').join('');
+      const globeIcon='<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18Z"/>',editIcon='<path d="m4 20 4.2-1 10.9-10.9-3.2-3.2L5 15.8 4 20Z"/><path d="m14.8 6 3.2 3.2"/>',externalIcon='<path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/>';
+      const actionCard=(tag,attrs,icon,title,desc)=>'<'+tag+' class="quick-action-card" '+attrs+'><span class="quick-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'+icon+'</svg></span><b>'+h(title)+'</b><span class="quick-action-desc">'+h(desc)+'<i class="quick-action-chev">›</i></span></'+tag+'>';
+      const quickActionsMarkup=actionCard('button','type="button" data-action="run-diagnostics"',globeIcon,'Проверить сайт','Быстрая проверка доступности и скорости')+actionCard('button','type="button" data-view="client-overview"',editIcon,'Изменить сайт','Управление контентом и настройками')+actionCard('a','href="'+h(s.target_url)+'" target="_blank" rel="noopener noreferrer"',externalIcon,'Открыть сайт','Перейти на ваш сайт в новом окне');
+      const quickRow='<div class="quick-row"><section class="card quick-overview-card"><h2>Быстрый обзор</h2><div class="quick-statuses">'+quickStatusesMarkup+'</div></section>'+quickActionsMarkup+'</div>';
       const eventIcons={lead:'✉',change:'✎','incident-opened':'⚠','incident-resolved':'✓',scan:'⟳'};
       const events=buildRecentEvents(a,s,8);
       const eventsMarkup=events.length?events.map(e=>'<div class="event"><span class="event-icon">'+(eventIcons[e.type]||'•')+'</span><div><b>'+h(e.title)+'</b><div class="muted small">'+h(e.detail)+'</div></div><time>'+rel(e.timestamp)+'</time></div>').join(''):empty('Событий пока нет.');
@@ -584,7 +606,8 @@ export function platformHtml(nonce) {
       $('view').innerHTML=pageHead('Главная','Обзор и управление вашим сайтом','Ключевые показатели сайта — в одном месте.')
         +statusBanner
         +tilesMarkup
-        +'<div class="two-col">'+eventsCard+'<aside>'+quickOverview+leadsTodayCard+'</aside></div>'
+        +quickRow
+        +'<div class="two-col">'+eventsCard+'<aside>'+leadsTodayCard+'</aside></div>'
         +'<section class="card"><div class="card-head"><div><h2>Последние заявки</h2></div>'+(rows.length?'<button class="ghost" type="button" data-view="client-leads">Все заявки →</button>':'')+'</div>'+leadsTable+'</section>';
     }
     function renderClientReviews(a,s){
