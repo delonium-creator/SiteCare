@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildContentFields, buildDigestSummary, checkDomainExpiry, computeHealthScore, diagnosePage, extractEditableInventory, scanSiteInventory } from "../gateway/src/platform-monitor.js";
+import { buildContentFields, buildDigestSummary, categorySeverityCounts, checkDomainExpiry, computeHealthScore, diagnosePage, extractEditableInventory, scanSiteInventory } from "../gateway/src/platform-monitor.js";
 
 test("diagnostics report observable SEO, accessibility and mixed-content facts", () => {
   const html = `<!doctype html><html><head><title>Коротко</title><meta name="robots" content="noindex"><link rel="canonical" href="https://example.com/"></head><body><h1>Первый</h1><h1>Второй</h1><img src="https://example.com/photo.jpg"><script src="http://old.example.com/widget.js"></script></body></html>`;
@@ -34,6 +34,9 @@ test("whole-site scan aggregates duplicate metadata and failed internal pages", 
   assert.equal(result.diagnostics.pagesFailed, 1);
   assert.ok(result.diagnostics.issues.some((issue) => issue.issueId.startsWith("duplicate-title:")));
   assert.ok(result.diagnostics.issues.some((issue) => issue.category === "availability"));
+  const { categoryScores } = result.diagnostics.summary;
+  assert.deepEqual(Object.keys(categoryScores).sort(), ["mobile", "performance", "security", "seo"]);
+  for (const score of Object.values(categoryScores)) assert.ok(score >= 0 && score <= 100);
 });
 
 test("a clean site scores 100 and each severity pulls the score down without going negative", () => {
@@ -43,6 +46,19 @@ test("a clean site scores 100 and each severity pulls the score down without goi
   assert.equal(computeHealthScore({ medium: 2 }), 90);
   assert.equal(computeHealthScore({ low: 3 }), 97);
   assert.equal(computeHealthScore({ high: 10, medium: 10, low: 10 }), 0);
+});
+
+test("categorySeverityCounts isolates one category's severities for the Главная gauges", () => {
+  const issues = [
+    { category: "seo", severity: "high" },
+    { category: "seo", severity: "low" },
+    { category: "performance", severity: "medium" },
+    { category: "mobile", severity: "high" }
+  ];
+  assert.deepEqual(categorySeverityCounts(issues, "seo"), { high: 1, medium: 0, low: 1 });
+  assert.deepEqual(categorySeverityCounts(issues, "security"), { high: 0, medium: 0, low: 0 });
+  assert.equal(computeHealthScore(categorySeverityCounts(issues, "seo")), 84);
+  assert.equal(computeHealthScore(categorySeverityCounts(issues, "security")), 100);
 });
 
 test("a stable week reads as a positive result, not an absence of work", () => {

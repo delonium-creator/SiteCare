@@ -327,6 +327,18 @@ export function computeHealthScore({ high = 0, medium = 0, low = 0 } = {}) {
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
+// Same severity tally computeHealthScore already uses for the site-wide score,
+// scoped to one diagnostics category -- so a per-category gauge and the
+// overall health score stay two views of the same formula, not two different
+// scoring philosophies.
+export function categorySeverityCounts(issues, category) {
+  const counts = { high: 0, medium: 0, low: 0 };
+  for (const issue of issues || []) {
+    if (issue?.category === category && counts[issue.severity] !== undefined) counts[issue.severity] += 1;
+  }
+  return counts;
+}
+
 export function diagnosePage(html, pageUrl, observation = {}) {
   const source = String(html || "");
   const url = new URL(validateTargetUrl(pageUrl));
@@ -644,7 +656,13 @@ export async function scanSiteInventory(site, fetchImpl = fetch, { maxPages = 40
         high: severityCounts.high,
         medium: severityCounts.medium,
         low: severityCounts.low,
-        categories: categoryCounts
+        categories: categoryCounts,
+        categoryScores: Object.fromEntries(
+          ["seo", "performance", "mobile", "security"].map((category) => [
+            category,
+            computeHealthScore(categorySeverityCounts(diagnosticIssues, category))
+          ])
+        )
       },
       issues: diagnosticIssues.slice(0, 120),
       pageFacts: pages.map((page) => page.diagnostics?.facts).filter(Boolean).slice(0, 80),
