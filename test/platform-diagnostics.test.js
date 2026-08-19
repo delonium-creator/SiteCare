@@ -22,6 +22,11 @@ test("detects a Yandex Metrika counter from the standard init call or the noscri
   assert.equal(detectYandexMetrikaCounter(""), null);
 });
 
+test("detects a Yandex Metrika counter from Tilda's own generated snippet (id assigned to a variable, not passed literally)", () => {
+  const tildaSnippet = `(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};m[i].l=1*new Date();for(var j=0;j<document.scripts.length;j++){if(document.scripts[j].src===r){return}}k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(window,document,"script","https://mc.yandex.ru/metrika/tag.js","ym");window.mainMetrikaId='111766635';ym(window.mainMetrikaId,"init",{clickmap:true,trackLinks:true,accurateTrackBounce:true,webvisor:true});`;
+  assert.equal(detectYandexMetrikaCounter(tildaSnippet), "111766635");
+});
+
 test("a plain visible phone next to an email is recognized without technical ids", () => {
   const inventory = extractEditableInventory(`<!doctype html><html lang="ru"><head><title>Контакты компании</title><meta name="description" content="Контакты"><meta name="viewport" content="width=device-width"><link rel="canonical" href="https://example.com/"></head><body><div id="rec10"><span>11111111111111</span><span>sales@example.com</span></div><div id="rec20"><span>Заказ 1620232389262</span></div></body></html>`, "https://example.com/");
   assert.ok(inventory.phones.some((phone) => phone.includes("11111111111111")));

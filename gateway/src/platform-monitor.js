@@ -678,6 +678,11 @@ export function detectYandexMetrikaCounter(html) {
   const source = String(html || "");
   const initMatch = /\bym\(\s*(\d{5,10})\s*,\s*["']init["']/u.exec(source);
   if (initMatch) return initMatch[1];
+  // Tilda's own generated snippet doesn't pass the id straight into ym() -
+  // it assigns it to a variable first (window.mainMetrikaId='NNN'; ym(window.mainMetrikaId, "init", ...)).
+  // Confirmed against a real published Tilda page, not just the generic docs example.
+  const variableMatch = /mainMetrikaId\s*=\s*["'](\d{5,10})["']/u.exec(source);
+  if (variableMatch) return variableMatch[1];
   const watchMatch = /mc\.yandex\.ru\/watch\/(\d{5,10})/u.exec(source);
   if (watchMatch) return watchMatch[1];
   return null;
