@@ -1,6 +1,7 @@
 import { analyzeForms } from "../../src/forms.js";
 import { telegramSendMessage } from "../../src/notifications.js";
 import { dayKey, newId, nextCheckAt, safeText, validateTargetUrl } from "./platform-core.js";
+import { generateSiteInsight } from "./platform-insights.js";
 
 const MAX_PAGE_BYTES = 1024 * 1024;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -918,8 +919,11 @@ export async function runDuePlatformChecks(env, { limit = 25 } = {}) {
 // Full diagnostics (SEO, accessibility, mixed content, etc.) are heavier than
 // the uptime/form check, so the health score runs once a day per site rather
 // than on every 5-minute monitor tick.
-async function runSiteHealthScan(env, site, fetchImpl = fetch) {
-  const inventory = await scanSiteInventory(site, fetchImpl, { maxPages: site.scope === "site" ? 40 : 1 });
+// Shared by the daily cron scan and the manual "Запустить диагностику" button
+// so both contribute the same data point to the health-score trend the AI
+// Analyst reads - a diagnostics run only the user triggers is just as real
+// a signal as the scheduled one.
+export async function recordHealthCheck(env, site, inventory) {
   const summary = inventory.diagnostics?.summary || { high: 0, medium: 0, low: 0, total: 0 };
   const score = computeHealthScore(summary);
   const checkedAt = new Date().toISOString();
@@ -935,6 +939,17 @@ async function runSiteHealthScan(env, site, fetchImpl = fetch) {
     ).bind(site.site_id, site.site_id)
   ]);
   return { score, ...summary };
+}
+
+async function runSiteHealthScan(env, site, fetchImpl = fetch) {
+  const inventory = await scanSiteInventory(site, fetchImpl, { maxPages: site.scope === "site" ? 40 : 1 });
+  const result = await recordHealthCheck(env, site, inventory);
+  try {
+    await generateSiteInsight(env, site, { fetchImpl });
+  } catch (err) {
+    console.error("ai_insight_failed", err?.message);
+  }
+  return result;
 }
 
 export async function runDueHealthScans(env, { limit = 10, fetchImpl = fetch } = {}) {

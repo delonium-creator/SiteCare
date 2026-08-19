@@ -49,8 +49,9 @@ import {
   sendSupportReplyEmail,
   sendSupportRequestEmail
 } from "./platform-email.js";
-import { checkPlatformSite, inspectSite, runDuePlatformChecks, runDueHealthScans, runDueDigests, runDueContentAudits, runDueDomainChecks, runDueMonitorRollups, scanSiteInventory, siteReport } from "./platform-monitor.js";
+import { checkPlatformSite, inspectSite, runDuePlatformChecks, runDueHealthScans, runDueDigests, runDueContentAudits, runDueDomainChecks, runDueMonitorRollups, recordHealthCheck, scanSiteInventory, siteReport } from "./platform-monitor.js";
 import { prepareSiteChange, phoneValueQuestion } from "./platform-assistant.js";
+import { generateSiteInsight } from "./platform-insights.js";
 import { encryptProtectedJson, leadRowToPublic, normalizeLeadSubmission } from "./platform-leads.js";
 import {
   appendConversationMessage,
@@ -1110,6 +1111,22 @@ async function siteHealthHistory(env, user, siteId, limit = 10) {
   return json({ ok: true, history: rows?.results || [] });
 }
 
+async function siteInsights(env, user, siteId, limit = 5) {
+  await siteAccess(env, user, siteId, "viewer");
+  const rows = await env.GATEWAY_DB.prepare(
+    "SELECT id, type, severity, title, summary, details, confidence, recommended_action, action_target, created_at FROM ai_insights WHERE site_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT ?"
+  ).bind(siteId, Math.min(20, Math.max(1, limit))).all();
+  return json({ ok: true, insights: rows?.results || [] });
+}
+
+async function dismissInsight(env, user, siteId, insightId) {
+  await siteAccess(env, user, siteId, "viewer");
+  await env.GATEWAY_DB.prepare(
+    "UPDATE ai_insights SET status = 'dismissed' WHERE id = ? AND site_id = ?"
+  ).bind(Number(insightId), siteId).run();
+  return json({ ok: true });
+}
+
 async function requireCompletedIntegration(env, site) {
   const inspection = await inspectSite(site);
   const checkedAt = new Date().toISOString();
@@ -1162,6 +1179,12 @@ function normalizedPhoneDigits(value) {
 async function inventory(request, env, user, siteId) {
   const { site } = await siteAccess(env, user, siteId, "manager");
   const result = await scanSiteInventory(site, fetch, { maxPages: site.scope === "site" ? 40 : 1 });
+  try {
+    await recordHealthCheck(env, site, result);
+    await generateSiteInsight(env, site, { fetchImpl: fetch });
+  } catch (err) {
+    console.error("ai_insight_failed", err?.message);
+  }
   return json({ ok: true, ...result });
 }
 
@@ -2791,7 +2814,7 @@ export async function handlePlatformRoute(request, env, path) {
 
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})$/u.exec(path);
   if (request.method === "PATCH" && match) return updateSite(request, env, user, match[1]);
-  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(check|integration|report|content-changes|incidents|health-history)$/u.exec(path);
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(check|integration|report|content-changes|incidents|health-history|insights)$/u.exec(path);
   if (match) {
     if (request.method === "POST" && match[2] === "check") return checkOneSite(env, user, match[1]);
     if (request.method === "GET" && match[2] === "integration") return integration(request, env, user, match[1]);
@@ -2806,7 +2829,12 @@ export async function handlePlatformRoute(request, env, path) {
     if (request.method === "GET" && match[2] === "health-history") {
       return siteHealthHistory(env, user, match[1], Number(new URL(request.url).searchParams.get("limit") || 10));
     }
+    if (request.method === "GET" && match[2] === "insights") {
+      return siteInsights(env, user, match[1], Number(new URL(request.url).searchParams.get("limit") || 5));
+    }
   }
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/insights\/(\d+)\/dismiss$/u.exec(path);
+  if (request.method === "POST" && match) return dismissInsight(env, user, match[1], match[2]);
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/webhook\/rotate$/u.exec(path);
   if (request.method === "POST" && match) return rotateWebhook(request, env, user, match[1]);
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/forms\/test$/u.exec(path);

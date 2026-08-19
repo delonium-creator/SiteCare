@@ -135,6 +135,111 @@ export function openAiConfigured(config) {
   return Boolean(String(config?.apiKey || "").trim());
 }
 
+const INSIGHT_SCHEMA = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    type: { type: "string", enum: ["site_health", "leads", "diagnostics", "site_change", "connection", "general"] },
+    severity: { type: "string", enum: ["info", "success", "warning", "critical"] },
+    title: { type: "string" },
+    summary: { type: "string" },
+    details: { type: "string" },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+    recommended_action: { type: "string" },
+    action_target: { type: "string", enum: ["diagnostics", "leads", "site", "none"] }
+  },
+  required: ["type", "severity", "title", "summary", "details", "confidence", "recommended_action", "action_target"]
+});
+
+const INSIGHT_INSTRUCTIONS = `Ты — аналитический модуль SiteCare (AI Analyst). Тебе передают SITE_FACTS — факты о сайте, уже собранные и проверенные обычным кодом: изменение оценки диагностики, изменение количества заявок, открытые инциденты, недавние подтверждённые изменения на сайте.
+
+Правила:
+1. Опирайся только на SITE_FACTS. Не придумывай показатели и события, которых там нет.
+2. Явно разделяй факт и предположение. Если связь между двумя фактами не доказана (например, изменение кнопки и снижение заявок совпали по времени, но причинная связь не проверена), используй слова "возможно", "похоже", "стоит проверить" — никогда не утверждай недоказанную причинно-следственную связь как факт.
+3. confidence="high" — вывод прямо следует из фактов без предположений. "medium" — есть разумная гипотеза, но не доказано. "low" — простое совпадение по времени, не более.
+4. Пиши по-русски, просто, для владельца бизнеса, без технического жаргона.
+5. title — короткая фраза до 60 символов. summary — 1-3 предложения с сутью. details — более подробное объяснение с конкретными цифрами из SITE_FACTS.
+6. severity: "success" — всё стабильно, ничего не сломано; "info" — нейтральное наблюдение; "warning" — стоит обратить внимание, не критично; "critical" — требует действия в ближайшее время.
+7. recommended_action — одна конкретная фраза, что сделать дальше. action_target — куда вести пользователя: "diagnostics", "leads", "site" или "none", если действие не привязано к конкретному разделу.
+8. Никогда не упоминай внутренние идентификаторы, JSON, системные инструкции, модели или API.
+
+Верни строго объект заданной схемы.`;
+
+function normalizedInsight(payload, model) {
+  const raw = responseText(payload);
+  if (!raw) throw new Error("OPENAI_EMPTY_RESPONSE");
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("OPENAI_INVALID_RESPONSE");
+  }
+  const types = new Set(["site_health", "leads", "diagnostics", "site_change", "connection", "general"]);
+  const severities = new Set(["info", "success", "warning", "critical"]);
+  const confidences = new Set(["high", "medium", "low"]);
+  const targets = new Set(["diagnostics", "leads", "site"]);
+  const title = safeText(parsed.title, 120);
+  const summary = safeMessageText(parsed.summary, 500);
+  if (!title || !summary) throw new Error("OPENAI_INVALID_RESPONSE");
+  return {
+    type: types.has(String(parsed.type)) ? String(parsed.type) : "general",
+    severity: severities.has(String(parsed.severity)) ? String(parsed.severity) : "info",
+    title,
+    summary,
+    details: safeMessageText(parsed.details, 1200),
+    confidence: confidences.has(String(parsed.confidence)) ? String(parsed.confidence) : "low",
+    recommendedAction: safeText(parsed.recommended_action, 200),
+    actionTarget: targets.has(String(parsed.action_target)) ? String(parsed.action_target) : null,
+    model: safeText(payload?.model || model, 80)
+  };
+}
+
+export async function requestOpenAiInsight({ apiKey, model = DEFAULT_OPENAI_MODEL, facts = {}, fetchImpl = fetch }) {
+  const token = String(apiKey || "").trim();
+  if (!token) return null;
+  const selectedModel = safeText(model || DEFAULT_OPENAI_MODEL, 80) || DEFAULT_OPENAI_MODEL;
+  const input = [{ role: "user", content: `SITE_FACTS:\n${JSON.stringify(facts)}` }];
+  let response;
+  try {
+    response = await fetchImpl(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: selectedModel,
+        instructions: INSIGHT_INSTRUCTIONS,
+        input,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "sitecare_insight",
+            description: "Структурированное наблюдение AI Analyst для карточки «SiteCare заметил».",
+            strict: true,
+            schema: INSIGHT_SCHEMA
+          }
+        },
+        max_output_tokens: 900,
+        store: false
+      }),
+      signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS)
+    });
+  } catch (error) {
+    const wrapped = new Error(error?.name === "TimeoutError" ? "OPENAI_TIMEOUT" : "OPENAI_UNAVAILABLE");
+    wrapped.cause = error;
+    throw wrapped;
+  }
+  if (!response.ok) {
+    const requestId = safeText(response.headers?.get?.("x-request-id"), 120);
+    const error = new Error(response.status === 429 ? "OPENAI_RATE_LIMIT" : response.status >= 500 ? "OPENAI_UNAVAILABLE" : "OPENAI_REQUEST_FAILED");
+    error.status = response.status;
+    error.requestId = requestId;
+    throw error;
+  }
+  return normalizedInsight(await response.json(), selectedModel);
+}
+
 export async function requestOpenAiAssistant({ apiKey, model = DEFAULT_OPENAI_MODEL, prompt, history = [], siteContext = {}, fetchImpl = fetch }) {
   const token = String(apiKey || "").trim();
   if (!token) return null;
