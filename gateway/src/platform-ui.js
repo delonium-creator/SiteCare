@@ -126,8 +126,9 @@ export function platformHtml(nonce) {
     .leads-today strong{display:block;margin:4px 0 2px;font-size:36px;line-height:1}
     .leads-today-chart{display:block;width:100%;height:70px;margin:16px 0 18px;color:var(--brand)}
     .leads-today .ghost{margin-top:0;display:flex;align-items:center;justify-content:space-between;gap:8px}
-    .events-half{grid-template-columns:1fr 1fr}
-    @media(max-width:1120px){.events-half{grid-template-columns:1fr}}
+    .leads-today-recent-head{margin:24px 0 15px;padding-top:22px;border-top:1px solid var(--line)}
+    .events-half{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+    @media(max-width:1120px){.events-half{grid-template-columns:minmax(0,1fr)}}
     .lead-dot{display:inline-block;width:8px;height:8px;margin-right:6px;border-radius:50%;background:#c7cad4}.lead-dot.ok{background:var(--green)}.lead-dot.warn{background:var(--amber)}
     .event{grid-template-columns:42px minmax(0,1fr) auto}.event-icon{width:42px;height:42px;border-radius:50%;background:#eef0f5;color:#6b7180}.event-icon svg{width:20px;height:20px}
     .event-icon.green{background:var(--green);color:#fff}.event-icon.blue{background:#2f6fe0;color:#fff}.event-icon.purple{background:var(--brand);color:#fff}.event-icon.amber{background:var(--amber);color:#fff}.event-icon.red{background:var(--red);color:#fff}
@@ -614,15 +615,14 @@ export function platformHtml(nonce) {
       const allEvents=buildRecentEvents(a,s,30),events=allEvents.slice(0,4);
       const eventsMarkup=events.length?events.map(eventRowMarkup).join(''):empty('Событий пока нет.');
       const eventsCard='<section class="card"><div class="card-head"><div><h2>Последние события</h2><p>Заявки, изменения и проверки сайта</p></div>'+(allEvents.length?'<button class="ghost" type="button" data-action="events-dialog">Все события →</button>':'')+'</div>'+eventsMarkup+'</section>';
-      const leadsTodayCard='<section class="card leads-today"><div class="card-head"><div><h2>Заявки сегодня</h2></div></div><strong>'+todayLeads+'</strong><span class="stat-hint">'+(todayLeads?'новых обращений':'пока нет новых обращений')+'</span><svg class="leads-today-chart" viewBox="0 0 220 70" fill="none" aria-hidden="true"><polyline points="4,50 30,44 56,48 82,32 108,36 134,18 160,24 190,10 216,16" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="216" cy="16" r="4" fill="currentColor"/></svg><button class="ghost wide" type="button" data-view="client-leads"><span>Перейти к заявкам</span><i class="quick-action-chev">›</i></button></section>';
       const statusLabels={new:'Новая',in_progress:'В работе',completed:'Готово',spam:'Спам'};
       const recentLeads=rows.slice(0,3);
-      const leadsTable=recentLeads.length?'<div class="table-wrap"><table><thead><tr><th>Клиент</th><th>Источник</th><th>Сообщение</th><th>Статус</th><th>Дата</th></tr></thead><tbody>'+recentLeads.map(r=>'<tr><td>'+h(r.name||r.phone||r.email||'—')+'</td><td>'+h(r.formLabel||r.source||'Сайт')+'</td><td>'+h(String(r.message||'—').slice(0,60))+'</td><td><i class="lead-dot '+(r.status==='completed'?'ok':r.status==='new'?'warn':'')+'"></i>'+h(statusLabels[r.status]||r.status)+'</td><td>'+h(rel(r.receivedAt))+'</td></tr>').join('')+'</tbody></table></div>':empty('Заявок пока нет.');
+      const leadsTable=recentLeads.length?'<div class="table-wrap"><table><thead><tr><th>Имя</th><th>Телефон</th><th>Сообщение</th><th>Время</th></tr></thead><tbody>'+recentLeads.map(r=>'<tr><td><i class="lead-dot '+(r.status==='completed'?'ok':r.status==='new'?'warn':'')+'"></i>'+h(r.name||'—')+'</td><td>'+h(r.phone||r.email||'—')+'</td><td>'+h(String(r.message||'—').slice(0,40))+'</td><td>'+h(rel(r.receivedAt))+'</td></tr>').join('')+'</tbody></table></div>':empty('Заявок пока нет.');
+      const leadsTodayCard='<section class="card leads-today"><div class="card-head"><div><h2>Заявки сегодня</h2></div></div><strong>'+todayLeads+'</strong><span class="stat-hint">'+(todayLeads?'новых обращений':'пока нет новых обращений')+'</span><svg class="leads-today-chart" viewBox="0 0 220 70" fill="none" aria-hidden="true"><polyline points="4,50 30,44 56,48 82,32 108,36 134,18 160,24 190,10 216,16" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="216" cy="16" r="4" fill="currentColor"/></svg><button class="ghost wide" type="button" data-view="client-leads"><span>Перейти к заявкам</span><i class="quick-action-chev">›</i></button><div class="card-head leads-today-recent-head"><h2>Последние заявки</h2>'+(rows.length?'<button class="ghost" type="button" data-view="client-leads">Все заявки →</button>':'')+'</div>'+leadsTable+'</section>';
       $('view').innerHTML=pageHead('Главная','Обзор и управление вашим сайтом','Ключевые показатели сайта — в одном месте.')
         +tilesMarkup
         +quickRow
-        +'<div class="two-col events-half">'+eventsCard+leadsTodayCard+'</div>'
-        +'<section class="card"><div class="card-head"><div><h2>Последние заявки</h2></div>'+(rows.length?'<button class="ghost" type="button" data-view="client-leads">Все заявки →</button>':'')+'</div>'+leadsTable+'</section>';
+        +'<div class="two-col events-half">'+eventsCard+leadsTodayCard+'</div>';
     }
     function renderClientReviews(a,s){
       if(!hasFeature(a,'reviews')){$('view').innerHTML=lockedModule(a,'reviews');return}
