@@ -1179,9 +1179,10 @@ function normalizedPhoneDigits(value) {
 async function inventory(request, env, user, siteId) {
   const { site } = await siteAccess(env, user, siteId, "manager");
   const result = await scanSiteInventory(site, fetch, { maxPages: site.scope === "site" ? 40 : 1 });
+  const forceInsight = user.platform_role === "operator" && new URL(request.url).searchParams.get("force") === "1";
   try {
     await recordHealthCheck(env, site, result);
-    await generateSiteInsight(env, site, { fetchImpl: fetch });
+    await generateSiteInsight(env, site, { fetchImpl: fetch, force: forceInsight });
   } catch (err) {
     console.error("ai_insight_failed", err?.message);
   }

@@ -88,7 +88,7 @@ async function resolveStaleInsights(env, siteId, facts) {
   ).bind(siteId, ...types).run();
 }
 
-export async function generateSiteInsight(env, site, { fetchImpl = fetch } = {}) {
+export async function generateSiteInsight(env, site, { fetchImpl = fetch, force = false } = {}) {
   const siteId = site.site_id;
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -121,11 +121,16 @@ export async function generateSiteInsight(env, site, { fetchImpl = fetch } = {})
   await resolveStaleInsights(env, siteId, facts);
 
   const decision = shouldGenerateInsight(facts);
-  if (!decision.trigger) return null;
+  if (!decision.trigger && !force) return null;
   if (!env.OPENAI_API_KEY) return null;
 
-  const withinBudget = await underInsightRateLimit(env, siteId, 1, 12 * 60 * 60);
-  if (!withinBudget) return null;
+  // A forced test run (operator-only, "Проверить AI сейчас") skips the
+  // per-site 12h cooldown so testing doesn't require waiting - the daily
+  // ai_requests budget below still applies, that is the real cost guard.
+  if (!force) {
+    const withinBudget = await underInsightRateLimit(env, siteId, 1, 12 * 60 * 60);
+    if (!withinBudget) return null;
+  }
 
   const accountRow = await env.GATEWAY_DB.prepare("SELECT plan FROM platform_accounts WHERE account_id = ?").bind(site.account_id).first();
   const plan = validatePlan(accountRow?.plan);
