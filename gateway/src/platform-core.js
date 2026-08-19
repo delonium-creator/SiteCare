@@ -272,6 +272,7 @@ function sitecareLoaderRuntime(replacePhoneText, makePhoneHref, replaceScheduleT
   const originalTextNodes = new Map();
   const originalElementText = new Map();
   const originalHrefs = new Map();
+  const originalAttributes = new Map();
   let currentConfig = null;
   let lastVersion = null;
   let applying = false;
@@ -283,9 +284,11 @@ function sitecareLoaderRuntime(replacePhoneText, makePhoneHref, replaceScheduleT
     phoneLinkCount: 0,
     scheduleCount: 0,
     buttonCount: 0,
+    contentCount: 0,
     phoneVerified: false,
     scheduleVerified: false,
-    buttonVerified: false
+    buttonVerified: false,
+    contentVerified: false
   };
   let observer = null;
 
@@ -520,6 +523,41 @@ function sitecareLoaderRuntime(replacePhoneText, makePhoneHref, replaceScheduleT
     }
   }
 
+  function setElementAttribute(element, name, value) {
+    if (!element) return false;
+    if (!originalAttributes.has(element)) originalAttributes.set(element, new Map());
+    const attrMap = originalAttributes.get(element);
+    if (!attrMap.has(name)) attrMap.set(name, element.getAttribute(name));
+    if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+    return element.getAttribute(name) === value;
+  }
+
+  function imageCandidateElements() {
+    return [...document.querySelectorAll("img")].filter((element) => Boolean(element.getAttribute("src")));
+  }
+
+  function contentRuleMatches(rule, element, index) {
+    const pathname = location.pathname || "/";
+    if (rule.pagePath && rule.pagePath !== pathname) return false;
+    const blockId = element.closest?.("[id^='rec']")?.id || "";
+    if (Number(rule.matchIndex) !== index) return false;
+    if (rule.blockId && rule.blockId !== blockId) return false;
+    const currentAlt = (element.getAttribute("alt") || "").trim();
+    return !rule.originalValue || currentAlt === rule.originalValue;
+  }
+
+  function updateContentRules(config, counts) {
+    const elements = imageCandidateElements();
+    for (const rule of Array.isArray(config.contentRules) ? config.contentRules : []) {
+      if (rule.field !== "image_alt") continue;
+      for (let index = 0; index < elements.length; index += 1) {
+        if (!contentRuleMatches(rule, elements[index], index)) continue;
+        if (setElementAttribute(elements[index], "alt", rule.newValue)) counts.contentCount += 1;
+        break;
+      }
+    }
+  }
+
   function updateExplicitTargets(root, config, counts) {
     if (config.scheduleText) {
       for (const element of elementsWithin(root, "[data-sitecare-schedule]")) {
@@ -568,9 +606,17 @@ function sitecareLoaderRuntime(replacePhoneText, makePhoneHref, replaceScheduleT
       if (value === null) element.removeAttribute("href");
       else element.setAttribute("href", value);
     }
+    for (const [element, attrs] of originalAttributes) {
+      if (!element.isConnected) continue;
+      for (const [name, value] of attrs) {
+        if (value === null) element.removeAttribute(name);
+        else element.setAttribute(name, value);
+      }
+    }
     originalTextNodes.clear();
     originalElementText.clear();
     originalHrefs.clear();
+    originalAttributes.clear();
   }
 
   function validConfig(config) {
@@ -606,9 +652,11 @@ function sitecareLoaderRuntime(replacePhoneText, makePhoneHref, replaceScheduleT
       phoneLinkCount: 0,
       scheduleCount: 0,
       buttonCount: 0,
+      contentCount: 0,
       phoneVerified: false,
       scheduleVerified: false,
-      buttonVerified: false
+      buttonVerified: false,
+      contentVerified: false
     };
     try {
       restore();
@@ -617,6 +665,7 @@ function sitecareLoaderRuntime(replacePhoneText, makePhoneHref, replaceScheduleT
         applyWithin(document, config, counts);
         updatePhoneTargetRules(config, counts);
         updateButtonRules(config, counts);
+        updateContentRules(config, counts);
       }
       // A visible number is required for phone confirmation. A changed tel:
       // link is reported separately, but never presented to the user as a
@@ -624,9 +673,10 @@ function sitecareLoaderRuntime(replacePhoneText, makePhoneHref, replaceScheduleT
       counts.phoneVerified = Boolean(config.phone || config.phoneRules?.length || config.phoneTargetRules?.length) && counts.phoneTextCount > 0;
       counts.scheduleVerified = Boolean(config.scheduleText) && counts.scheduleCount > 0;
       counts.buttonVerified = counts.buttonCount > 0;
+      counts.contentVerified = Boolean(config.contentRules?.length) && counts.contentCount > 0;
       currentCounts = counts;
       document.documentElement?.setAttribute("data-sitecare-loader", "6");
-      document.documentElement?.setAttribute("data-sitecare-status", counts.phoneVerified || counts.scheduleVerified || counts.buttonVerified || !config.enabled ? "ready" : "connected");
+      document.documentElement?.setAttribute("data-sitecare-status", counts.phoneVerified || counts.scheduleVerified || counts.buttonVerified || counts.contentVerified || !config.enabled ? "ready" : "connected");
       reportApplied(config, counts);
     } catch (error) {
       document.documentElement?.setAttribute("data-sitecare-status", "apply-error");

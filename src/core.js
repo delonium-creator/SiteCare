@@ -109,6 +109,16 @@ export function validateFieldValue(field, rawValue) {
     throw new Error("Допустимы HTTPS-ссылка, tel:, mailto:, якорь #... или путь /....");
   }
 
+  if (field === "imageAlt") {
+    if (value.length < 1 || value.length > 300) {
+      throw new Error("Alt-текст должен содержать от 1 до 300 символов.");
+    }
+    if (/[<>]/.test(value) || CONTROL_CHARACTERS.test(value)) {
+      throw new Error("Alt-текст содержит недопустимые символы.");
+    }
+    return value;
+  }
+
   throw new Error("Это поле нельзя менять.");
 }
 

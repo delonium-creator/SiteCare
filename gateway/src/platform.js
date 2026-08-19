@@ -1185,12 +1185,13 @@ function changeLabel(kind) {
     phone: "Телефон",
     schedule: "График работы",
     button_text: "Текст кнопки",
-    button_url: "Ссылка кнопки"
+    button_url: "Ссылка кнопки",
+    image_alt: "Alt-текст изображения"
   }[kind] || "Изменение";
 }
 
 function changeField(kind) {
-  return { phone: "phone", schedule: "hours", button_text: "ctaText", button_url: "ctaLink" }[kind] || "";
+  return { phone: "phone", schedule: "hours", button_text: "ctaText", button_url: "ctaLink", image_alt: "imageAlt" }[kind] || "";
 }
 
 function validatedChangeValue(kind, value) {
@@ -1407,7 +1408,7 @@ async function supportTelegramDisconnect(env, user) {
 }
 
 async function effectiveEditorInventory(env, siteId, inventory) {
-  const [phoneRulesResult, phoneTargetRulesResult, buttonRulesResult] = await Promise.all([
+  const [phoneRulesResult, phoneTargetRulesResult, buttonRulesResult, contentRulesResult] = await Promise.all([
     env.GATEWAY_DB.prepare(
       "SELECT original_digits, new_phone FROM platform_phone_rules WHERE site_id = ? AND enabled = 1"
     ).bind(siteId).all(),
@@ -1416,6 +1417,9 @@ async function effectiveEditorInventory(env, siteId, inventory) {
     ).bind(siteId).all(),
     env.GATEWAY_DB.prepare(
       "SELECT candidate_id, new_text, new_url FROM platform_button_rules WHERE site_id = ? AND enabled = 1 ORDER BY updated_at DESC"
+    ).bind(siteId).all(),
+    env.GATEWAY_DB.prepare(
+      "SELECT candidate_id, new_value FROM platform_content_rules WHERE site_id = ? AND field = 'image_alt' AND enabled = 1"
     ).bind(siteId).all()
   ]);
   const phoneRules = new Map((phoneRulesResult?.results || []).map((rule) => [rule.original_digits, rule.new_phone]));
@@ -1441,6 +1445,7 @@ async function effectiveEditorInventory(env, siteId, inventory) {
   }
   const buttonRules = new Map();
   for (const rule of buttonRulesResult?.results || []) if (!buttonRules.has(rule.candidate_id)) buttonRules.set(rule.candidate_id, rule);
+  const contentRules = new Map((contentRulesResult?.results || []).map((rule) => [rule.candidate_id, rule.new_value]));
   return {
     ...inventory,
     phones: [...visiblePhones.values()],
@@ -1450,6 +1455,10 @@ async function effectiveEditorInventory(env, siteId, inventory) {
       if (!rule) return candidate;
       const text = rule.new_text || candidate.text;
       return { ...candidate, text, label: text || candidate.label, url: rule.new_url || candidate.url };
+    }),
+    images: (inventory.images || []).map((candidate) => {
+      const newValue = contentRules.get(candidate.candidateId);
+      return newValue === undefined ? candidate : { ...candidate, currentAlt: newValue, label: newValue || candidate.label };
     })
   };
 }
@@ -1540,6 +1549,12 @@ async function assistantProposal(request, env, user, siteId) {
         page: candidate.pageTitle || candidate.pagePath,
         section: candidate.locationLabel || candidate.sectionLabel
       })),
+      images: (siteInventory.images || []).slice(0, 100).map((candidate) => ({
+        currentAlt: candidate.currentAlt,
+        page: candidate.pageTitle || candidate.pagePath,
+        section: candidate.sectionLabel,
+        context: candidate.context
+      })),
       formsFound: siteInventory.formCount || 0,
       formsReady: siteInventory.readyFormCount || 0
     }
@@ -1629,6 +1644,63 @@ async function applyPreparedChange(request, env, user, siteId) {
   const value = validatedChangeValue(kind, body.value);
   const current = await env.GATEWAY_DB.prepare("SELECT * FROM platform_site_overrides WHERE site_id = ?").bind(siteId).first();
   if (!current) fail("Настройки сайта не найдены.", 404, "NOT_FOUND");
+
+  if (kind === "image_alt") {
+    const candidateId = safeText(body.candidateId, 80);
+    if (!candidateId) fail("Выберите конкретное изображение на сайте.", 409, "IMAGE_REQUIRED");
+    const siteInventory = await scanSiteInventory(site, fetch, { maxPages: site.scope === "site" ? 40 : 1 });
+    const candidate = (siteInventory.images || []).find((item) => item.candidateId === candidateId);
+    if (!candidate) fail("Изображение изменилось или больше не найдено. Обновите список и выберите его снова.", 409, "IMAGE_CHANGED");
+    const existingRule = await env.GATEWAY_DB.prepare(
+      "SELECT rule_id, new_value FROM platform_content_rules WHERE site_id = ? AND candidate_id = ? AND scope = 'element' AND field = 'image_alt'"
+    ).bind(siteId, candidateId).first();
+    if (value === (existingRule?.new_value ?? candidate.currentAlt)) fail("Такое описание уже сохранено для этого изображения.", 409, "NO_CHANGE");
+    const imgNow = new Date().toISOString();
+    const imgVersion = Number(current.version) + 1;
+    const ruleId = existingRule?.rule_id || newId("content", candidateId);
+    const targetLabel = `${candidate.label || "Изображение"} · ${candidate.pageTitle || candidate.pagePath}`;
+    const summary = `${changeLabel(kind)}: ${safeText(value, 160)}`;
+    await env.GATEWAY_DB.batch([
+      env.GATEWAY_DB.prepare(
+        "INSERT INTO platform_content_rules (rule_id, site_id, field, candidate_id, page_path, block_id, match_index, scope, original_value, new_value, enabled, version, created_by, created_at, updated_at) VALUES (?, ?, 'image_alt', ?, ?, ?, ?, 'element', ?, ?, 1, ?, ?, ?, ?) " +
+        "ON CONFLICT(site_id, candidate_id, scope, field) DO UPDATE SET page_path = excluded.page_path, block_id = excluded.block_id, match_index = excluded.match_index, new_value = excluded.new_value, enabled = 1, version = excluded.version, updated_at = excluded.updated_at"
+      ).bind(ruleId, siteId, candidateId, candidate.pagePath, candidate.blockId || "", candidate.matchIndex, candidate.currentAlt || "", value, imgVersion, user.user_id, imgNow, imgNow),
+      env.GATEWAY_DB.prepare(
+        "INSERT INTO platform_content_rule_history (site_id, version, field, candidate_id, page_path, block_id, match_index, scope, original_value, new_value, enabled, created_by, created_at) VALUES (?, ?, 'image_alt', ?, ?, ?, ?, 'element', ?, ?, 1, ?, ?)"
+      ).bind(siteId, imgVersion, candidateId, candidate.pagePath, candidate.blockId || "", candidate.matchIndex, candidate.currentAlt || "", value, user.user_id, imgNow),
+      env.GATEWAY_DB.prepare(
+        "INSERT INTO platform_change_records (site_id, version, kind, summary, target_label, status, created_by, created_at, confirmed_at) VALUES (?, ?, 'image_alt', ?, ?, 'pending', ?, ?, NULL)"
+      ).bind(siteId, imgVersion, summary, targetLabel, user.user_id, imgNow),
+      env.GATEWAY_DB.prepare(
+        "DELETE FROM platform_change_records WHERE site_id = ? AND id NOT IN (SELECT id FROM platform_change_records WHERE site_id = ? ORDER BY id DESC LIMIT 100)"
+      ).bind(siteId, siteId),
+      // image_alt doesn't touch phone/schedule/button values, but every kind
+      // shares one version counter on platform_site_overrides (runtimeApplied
+      // and future applies both key off it), and rollback looks up a snapshot
+      // row in platform_override_history by exact version - both must still
+      // advance here even though the snapshotted values themselves don't change.
+      env.GATEWAY_DB.prepare(
+        "UPDATE platform_site_overrides SET version = ?, updated_at = ? WHERE site_id = ?"
+      ).bind(imgVersion, imgNow, siteId),
+      env.GATEWAY_DB.prepare(
+        "INSERT INTO platform_override_history (site_id, version, enabled, phone, schedule_text, button_text, button_url, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).bind(siteId, imgVersion, current.enabled, current.phone, current.schedule_text, current.button_text, current.button_url, user.user_id, imgNow),
+      env.GATEWAY_DB.prepare(
+        "DELETE FROM platform_override_history WHERE site_id = ? AND id NOT IN (SELECT id FROM platform_override_history WHERE site_id = ? ORDER BY version DESC LIMIT 100)"
+      ).bind(siteId, siteId)
+    ]);
+    if (user.platform_role !== "operator") {
+      const conversation = await conversationForSite(env, user, site);
+      await appendConversationMessage(env, conversation.conversation_id, {
+        authorType: "ai",
+        content: "Изменение отправлено на сайт. Я отмечу его готовым только после подтверждения с опубликованной страницы.",
+        metadata: { type: "pending", kind, value, version: imgVersion }
+      });
+    }
+    await audit(env, user, site.account_id, "site.change.apply", "site", siteId, `${kind}; версия ${imgVersion}`);
+    return json({ ok: true, version: imgVersion, status: "pending", message: "Изменение отправлено. Подтверждение появится после проверки опубликованной страницы." });
+  }
+
   const now = new Date().toISOString();
   const version = Number(current.version) + 1;
   let phone = current.phone;
@@ -1843,7 +1915,7 @@ async function siteOverrides(request, env, user, siteId) {
   const current = await env.GATEWAY_DB.prepare("SELECT * FROM platform_site_overrides WHERE site_id = ?").bind(siteId).first();
   if (!current) fail("Настройки сайта не найдены.", 404, "NOT_FOUND");
   if (request.method === "GET") {
-    const [historyResult, changesResult, rulesResult, phoneRulesResult, phoneTargetRulesResult, runtimeResult] = await Promise.all([
+    const [historyResult, changesResult, rulesResult, phoneRulesResult, phoneTargetRulesResult, contentRulesResult, runtimeResult] = await Promise.all([
       env.GATEWAY_DB.prepare(
         "SELECT version, enabled, phone, schedule_text, button_text, button_url, created_at FROM platform_override_history WHERE site_id = ? ORDER BY version DESC LIMIT 20"
       ).bind(siteId).all(),
@@ -1858,6 +1930,9 @@ async function siteOverrides(request, env, user, siteId) {
       ).bind(siteId).all(),
       env.GATEWAY_DB.prepare(
         "SELECT rule_id, candidate_id, page_path, block_id, source, original_phone, original_digits, occurrence_index, scope, new_phone, enabled, version, updated_at FROM platform_phone_target_rules WHERE site_id = ? ORDER BY updated_at DESC"
+      ).bind(siteId).all(),
+      env.GATEWAY_DB.prepare(
+        "SELECT rule_id, field, candidate_id, page_path, block_id, match_index, scope, original_value, new_value, enabled, version, updated_at FROM platform_content_rules WHERE site_id = ? ORDER BY updated_at DESC"
       ).bind(siteId).all(),
       env.GATEWAY_DB.prepare(
         "SELECT pathname, config_version, phone_count, schedule_count, button_count, phone_verified, schedule_verified, button_verified, error_text, reported_at FROM platform_runtime_reports WHERE site_id = ? ORDER BY reported_at DESC LIMIT 20"
@@ -1875,6 +1950,7 @@ async function siteOverrides(request, env, user, siteId) {
       buttonRules: rulesResult?.results || [],
       phoneRules: phoneRulesResult?.results || [],
       phoneTargetRules: phoneTargetRulesResult?.results || [],
+      contentRules: contentRulesResult?.results || [],
       runtimeReports: runtimeResult?.results || [],
       history: (historyResult?.results || []).map((item) => ({
         version: Number(item.version),
@@ -1969,7 +2045,7 @@ async function rollbackOverrides(request, env, user, siteId) {
   const body = await requestJson(request);
   const requestedVersion = Number(body.version);
   if (!Number.isInteger(requestedVersion) || requestedVersion < 1) fail("Выберите версию для восстановления.");
-  const [current, snapshot, ruleHistory, phoneRuleHistory, phoneTargetRuleHistory] = await Promise.all([
+  const [current, snapshot, ruleHistory, phoneRuleHistory, phoneTargetRuleHistory, contentRuleHistory] = await Promise.all([
     env.GATEWAY_DB.prepare("SELECT * FROM platform_site_overrides WHERE site_id = ?").bind(siteId).first(),
     env.GATEWAY_DB.prepare("SELECT * FROM platform_override_history WHERE site_id = ? AND version = ?").bind(siteId, requestedVersion).first(),
     env.GATEWAY_DB.prepare("SELECT * FROM platform_button_rule_history WHERE site_id = ? AND version <= ? ORDER BY version DESC, id DESC")
@@ -1977,6 +2053,8 @@ async function rollbackOverrides(request, env, user, siteId) {
     env.GATEWAY_DB.prepare("SELECT * FROM platform_phone_rule_history WHERE site_id = ? AND version <= ? ORDER BY version DESC, id DESC")
       .bind(siteId, requestedVersion).all(),
     env.GATEWAY_DB.prepare("SELECT * FROM platform_phone_target_rule_history WHERE site_id = ? AND version <= ? ORDER BY version DESC, id DESC")
+      .bind(siteId, requestedVersion).all(),
+    env.GATEWAY_DB.prepare("SELECT * FROM platform_content_rule_history WHERE site_id = ? AND version <= ? ORDER BY version DESC, id DESC")
       .bind(siteId, requestedVersion).all()
   ]);
   if (!current || !snapshot) fail("Эта версия больше недоступна.", 404, "NOT_FOUND");
@@ -2005,6 +2083,16 @@ async function rollbackOverrides(request, env, user, siteId) {
     seenPhoneTargetRules.add(key);
     if (Number(rule.enabled)) restoredPhoneTargetRules.push(rule);
   }
+  // Every future edit kind sharing platform_content_rules gets rollback
+  // support from this one block for free -- no per-kind copy needed here.
+  const restoredContentRules = [];
+  const seenContentRules = new Set();
+  for (const rule of contentRuleHistory?.results || []) {
+    const key = `${rule.candidate_id} ${rule.scope} ${rule.field}`;
+    if (seenContentRules.has(key)) continue;
+    seenContentRules.add(key);
+    if (Number(rule.enabled)) restoredContentRules.push(rule);
+  }
   const statements = [
     env.GATEWAY_DB.prepare(
       "UPDATE platform_site_overrides SET enabled = ?, phone = ?, schedule_text = ?, button_text = ?, button_url = ?, version = ?, updated_at = ? WHERE site_id = ?"
@@ -2017,7 +2105,8 @@ async function rollbackOverrides(request, env, user, siteId) {
     ).bind(siteId, version, `Восстановлена версия ${requestedVersion}`, user.user_id, now),
     env.GATEWAY_DB.prepare("DELETE FROM platform_button_rules WHERE site_id = ?").bind(siteId),
     env.GATEWAY_DB.prepare("DELETE FROM platform_phone_rules WHERE site_id = ?").bind(siteId),
-    env.GATEWAY_DB.prepare("DELETE FROM platform_phone_target_rules WHERE site_id = ?").bind(siteId)
+    env.GATEWAY_DB.prepare("DELETE FROM platform_phone_target_rules WHERE site_id = ?").bind(siteId),
+    env.GATEWAY_DB.prepare("DELETE FROM platform_content_rules WHERE site_id = ?").bind(siteId)
   ];
   for (const rule of restoredRules) {
     const ruleId = newId("rule", rule.candidate_id);
@@ -2050,6 +2139,17 @@ async function rollbackOverrides(request, env, user, siteId) {
       env.GATEWAY_DB.prepare(
         "INSERT INTO platform_phone_target_rule_history (site_id, version, candidate_id, page_path, block_id, source, original_phone, original_digits, occurrence_index, scope, new_phone, enabled, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"
       ).bind(siteId, version, rule.candidate_id, rule.page_path, rule.block_id, rule.source, rule.original_phone, rule.original_digits, rule.occurrence_index, rule.scope, rule.new_phone, user.user_id, now)
+    );
+  }
+  for (const rule of restoredContentRules) {
+    const ruleId = newId("content", rule.candidate_id);
+    statements.push(
+      env.GATEWAY_DB.prepare(
+        "INSERT INTO platform_content_rules (rule_id, site_id, field, candidate_id, page_path, block_id, match_index, scope, original_value, new_value, enabled, version, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)"
+      ).bind(ruleId, siteId, rule.field, rule.candidate_id, rule.page_path, rule.block_id, rule.match_index, rule.scope, rule.original_value, rule.new_value, version, user.user_id, now, now),
+      env.GATEWAY_DB.prepare(
+        "INSERT INTO platform_content_rule_history (site_id, version, field, candidate_id, page_path, block_id, match_index, scope, original_value, new_value, enabled, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"
+      ).bind(siteId, version, rule.field, rule.candidate_id, rule.page_path, rule.block_id, rule.match_index, rule.scope, rule.original_value, rule.new_value, user.user_id, now)
     );
   }
   await env.GATEWAY_DB.batch(statements);
@@ -2430,7 +2530,7 @@ async function publicConfig(request, env, siteId) {
   if (!site || !constantTimeEqual(key, site.loader_key)) fail("Конфигурация не найдена.", 404, "NOT_FOUND");
   const origin = request.headers.get("Origin") || "";
   if (origin && origin !== site.target_origin) fail("Страница не входит в подключённый сайт.", 403, "ORIGIN_REJECTED");
-  const [rules, phoneRules, phoneTargetRules] = await Promise.all([
+  const [rules, phoneRules, phoneTargetRules, contentRules] = await Promise.all([
     env.GATEWAY_DB.prepare(
       "SELECT candidate_id, page_path, block_id, original_text, original_url, match_index, scope, new_text, new_url, version FROM platform_button_rules WHERE site_id = ? AND enabled = 1 ORDER BY updated_at"
     ).bind(siteId).all(),
@@ -2439,6 +2539,9 @@ async function publicConfig(request, env, siteId) {
     ).bind(siteId).all(),
     env.GATEWAY_DB.prepare(
       "SELECT candidate_id, page_path, block_id, source, original_phone, original_digits, occurrence_index, scope, new_phone, version FROM platform_phone_target_rules WHERE site_id = ? AND enabled = 1 ORDER BY updated_at"
+    ).bind(siteId).all(),
+    env.GATEWAY_DB.prepare(
+      "SELECT field, candidate_id, page_path, block_id, match_index, scope, original_value, new_value, version FROM platform_content_rules WHERE site_id = ? AND enabled = 1 ORDER BY updated_at"
     ).bind(siteId).all()
   ]);
   return json({
@@ -2482,6 +2585,17 @@ async function publicConfig(request, env, siteId) {
       newUrl: rule.new_url,
       version: Number(rule.version)
     })),
+    contentRules: (contentRules?.results || []).map((rule) => ({
+      field: rule.field,
+      candidateId: rule.candidate_id,
+      pagePath: rule.page_path,
+      blockId: rule.block_id,
+      matchIndex: Number(rule.match_index),
+      scope: rule.scope,
+      originalValue: rule.original_value,
+      newValue: rule.new_value,
+      version: Number(rule.version)
+    })),
     version: Number(site.version)
   }, 200, origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin", "Cross-Origin-Resource-Policy": "cross-origin" } : {});
 }
@@ -2502,7 +2616,8 @@ async function runtimeApplied(request, env, siteId) {
     "SELECT s.site_id, s.target_origin, s.loader_key, o.version, o.enabled, o.phone, o.schedule_text, o.button_text, o.button_url, " +
     "(SELECT COUNT(*) FROM platform_phone_rules pr WHERE pr.site_id = s.site_id AND pr.enabled = 1) AS phone_rule_count, " +
     "(SELECT COUNT(*) FROM platform_phone_target_rules ptr WHERE ptr.site_id = s.site_id AND ptr.enabled = 1) AS phone_target_count, " +
-    "(SELECT COUNT(*) FROM platform_button_rules br WHERE br.site_id = s.site_id AND br.enabled = 1) AS button_rule_count " +
+    "(SELECT COUNT(*) FROM platform_button_rules br WHERE br.site_id = s.site_id AND br.enabled = 1) AS button_rule_count, " +
+    "(SELECT COUNT(*) FROM platform_content_rules cr WHERE cr.site_id = s.site_id AND cr.enabled = 1) AS content_rule_count " +
     "FROM platform_sites s JOIN platform_site_overrides o ON o.site_id = s.site_id WHERE s.site_id = ?"
   ).bind(siteId).first();
   const key = new URL(request.url).searchParams.get("key") || "";
@@ -2524,24 +2639,28 @@ async function runtimeApplied(request, env, siteId) {
   const phoneVerified = body?.phoneVerified === true ? 1 : 0;
   const scheduleVerified = body?.scheduleVerified === true ? 1 : 0;
   const buttonVerified = body?.buttonVerified === true ? 1 : 0;
+  const contentCount = count(body?.contentCount);
+  const contentVerified = body?.contentVerified === true ? 1 : 0;
   const errorText = safeText(body?.error, 300);
   const expectsPhone = Boolean(site.phone) || Number(site.phone_rule_count) > 0 || Number(site.phone_target_count) > 0;
   const expectsSchedule = Boolean(site.schedule_text);
   const expectsButton = Boolean(site.button_text) || Boolean(site.button_url) || Number(site.button_rule_count) > 0;
+  const expectsContent = Number(site.content_rule_count) > 0;
   const rollbackVerified = !errorText && (!Number(site.enabled) || (
     (!expectsPhone || phoneVerified === 1) &&
     (!expectsSchedule || scheduleVerified === 1) &&
-    (!expectsButton || buttonVerified === 1)
+    (!expectsButton || buttonVerified === 1) &&
+    (!expectsContent || contentVerified === 1)
   )) ? 1 : 0;
   const now = new Date().toISOString();
   await env.GATEWAY_DB.batch([
     env.GATEWAY_DB.prepare(
-      "INSERT INTO platform_runtime_reports (site_id, pathname, config_version, phone_count, schedule_count, button_count, phone_verified, schedule_verified, button_verified, error_text, reported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(site_id, pathname) DO UPDATE SET config_version = excluded.config_version, phone_count = excluded.phone_count, schedule_count = excluded.schedule_count, button_count = excluded.button_count, phone_verified = excluded.phone_verified, schedule_verified = excluded.schedule_verified, button_verified = excluded.button_verified, error_text = excluded.error_text, reported_at = excluded.reported_at"
-    ).bind(siteId, pathname, version, phoneCount, scheduleCount, buttonCount, phoneVerified, scheduleVerified, buttonVerified, errorText, now),
+      "INSERT INTO platform_runtime_reports (site_id, pathname, config_version, phone_count, schedule_count, button_count, phone_verified, schedule_verified, button_verified, content_count, content_verified, error_text, reported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(site_id, pathname) DO UPDATE SET config_version = excluded.config_version, phone_count = excluded.phone_count, schedule_count = excluded.schedule_count, button_count = excluded.button_count, phone_verified = excluded.phone_verified, schedule_verified = excluded.schedule_verified, button_verified = excluded.button_verified, content_count = excluded.content_count, content_verified = excluded.content_verified, error_text = excluded.error_text, reported_at = excluded.reported_at"
+    ).bind(siteId, pathname, version, phoneCount, scheduleCount, buttonCount, phoneVerified, scheduleVerified, buttonVerified, contentCount, contentVerified, errorText, now),
     env.GATEWAY_DB.prepare(
-      "UPDATE platform_change_records SET status = CASE WHEN status = 'confirmed' THEN 'confirmed' WHEN (kind = 'rollback' AND ? = 1) OR (kind = 'phone' AND ? = 1) OR (kind = 'schedule' AND ? = 1) OR (kind IN ('button_text','button_url') AND ? = 1) THEN 'confirmed' ELSE 'not_found' END, confirmed_at = CASE WHEN (kind = 'rollback' AND ? = 1) OR (kind = 'phone' AND ? = 1) OR (kind = 'schedule' AND ? = 1) OR (kind IN ('button_text','button_url') AND ? = 1) THEN ? ELSE confirmed_at END WHERE site_id = ? AND version = ?"
-    ).bind(rollbackVerified, phoneVerified, scheduleVerified, buttonVerified, rollbackVerified, phoneVerified, scheduleVerified, buttonVerified, now, siteId, version)
+      "UPDATE platform_change_records SET status = CASE WHEN status = 'confirmed' THEN 'confirmed' WHEN (kind = 'rollback' AND ? = 1) OR (kind = 'phone' AND ? = 1) OR (kind = 'schedule' AND ? = 1) OR (kind IN ('button_text','button_url') AND ? = 1) OR (kind = 'image_alt' AND ? = 1) THEN 'confirmed' ELSE 'not_found' END, confirmed_at = CASE WHEN (kind = 'rollback' AND ? = 1) OR (kind = 'phone' AND ? = 1) OR (kind = 'schedule' AND ? = 1) OR (kind IN ('button_text','button_url') AND ? = 1) OR (kind = 'image_alt' AND ? = 1) THEN ? ELSE confirmed_at END WHERE site_id = ? AND version = ?"
+    ).bind(rollbackVerified, phoneVerified, scheduleVerified, buttonVerified, contentVerified, rollbackVerified, phoneVerified, scheduleVerified, buttonVerified, contentVerified, now, siteId, version)
   ]);
   return json({ ok: true }, 200, corsForSite(origin));
 }

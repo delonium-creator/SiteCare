@@ -125,6 +125,10 @@ function stablePhoneCandidateId(value) {
   return stableCandidateId(value).replace(/^btn_/u, "phone_");
 }
 
+function stableImageCandidateId(value) {
+  return stableCandidateId(value).replace(/^btn_/u, "img_");
+}
+
 function pageBlockRanges(html) {
   return [...String(html || "").matchAll(/\bid=["'](rec\d+)["']/giu)]
     .map((match) => ({ index: match.index || 0, id: match[1] }))
@@ -467,6 +471,35 @@ export function extractEditableInventory(html, pageUrl, observation = {}) {
     if (buttons.length >= 250) break;
   }
 
+  const images = [];
+  let imgIndex = 0;
+  for (const match of source.matchAll(/<img\b([^>]*)>/giu)) {
+    const attributes = match[1] || "";
+    const rawSrc = htmlAttribute(attributes, "src").trim();
+    if (!rawSrc) continue;
+    const currentAlt = htmlAttribute(attributes, "alt").trim();
+    let absoluteSrc = rawSrc;
+    try { absoluteSrc = new URL(rawSrc, url).href; } catch { absoluteSrc = rawSrc; }
+    const blockId = blockAt(ranges, match.index || 0);
+    const identity = `${url.pathname}|${blockId}|${imgIndex}|img|${absoluteSrc}|${currentAlt}`;
+    const details = sectionDetails(source, ranges, match.index || 0);
+    images.push({
+      candidateId: stableImageCandidateId(identity),
+      pagePath: url.pathname || "/",
+      pageUrl: url.href,
+      pageTitle: title,
+      blockId,
+      matchIndex: imgIndex,
+      src: safeText(absoluteSrc, 500),
+      currentAlt,
+      label: safeText(currentAlt || `Изображение ${imgIndex + 1}`, 180),
+      sectionLabel: details.sectionLabel,
+      context: details.context
+    });
+    imgIndex += 1;
+    if (images.length >= 250) break;
+  }
+
   const schedules = [...new Set((visibleText(source).match(/(?:пн|вт|ср|чт|пт|сб|вс|ежедневно|будн)[^.!?\n]{0,45}\d{1,2}[:.]\d{2}\s*[–—-]\s*\d{1,2}[:.]\d{2}/giu) || [])
     .map((value) => safeText(value, 120)))].slice(0, 20);
   const phonesFound = phoneCandidates(source, url, ranges, title);
@@ -476,6 +509,7 @@ export function extractEditableInventory(html, pageUrl, observation = {}) {
   return {
     page: { url: url.href, path: url.pathname || "/", title },
     buttons,
+    images,
     phoneCandidates: phonesFound,
     schedules,
     phones,
@@ -546,6 +580,7 @@ export async function scanSiteInventory(site, fetchImpl = fetch, { maxPages = 40
     }
   }
   const candidates = pages.flatMap((page) => page.buttons).slice(0, 500);
+  const images = pages.flatMap((page) => page.images || []).slice(0, 500);
   const foundPhones = pages.flatMap((page) => page.phoneCandidates || []).slice(0, 500);
   const duplicateLocations = new Map();
   for (const candidate of foundPhones) {
@@ -640,6 +675,7 @@ export async function scanSiteInventory(site, fetchImpl = fetch, { maxPages = 40
     pageCount: pages.length,
     pages: pages.map((item) => ({ ...item.page, schedules: item.schedules })),
     candidates,
+    images,
     phoneCandidates: precisePhones,
     formCount: uniqueForms.size,
     readyFormCount: [...uniqueForms.values()].filter((form) => form.ready).length,

@@ -3,7 +3,7 @@ import { requestOpenAiAssistant } from "./platform-openai.js";
 
 const MAX_PROMPT = 1200;
 const AI_MODELS = ["@cf/zai-org/glm-4.7-flash", "@cf/google/gemma-4-26b-a4b-it"];
-const KINDS = new Set(["phone", "schedule", "button_text", "button_url", "advice", "unknown"]);
+const KINDS = new Set(["phone", "schedule", "button_text", "button_url", "image_alt", "advice", "unknown"]);
 
 function compact(value) {
   return String(value || "").replace(/\s+/gu, " ").trim();
@@ -290,6 +290,61 @@ function askButtonTarget() {
   return assistantResult({ message: "Какую кнопку вы хотите изменить? Напишите её текущий текст — например, «Записаться».", dialog: { intent: "button", stage: "target" } });
 }
 
+function rankImageCandidates(candidates, targetHint = "") {
+  const hint = compact(targetHint);
+  const list = Array.isArray(candidates) ? candidates : [];
+  if (!hint) return list.filter((item) => !item.currentAlt);
+  const normalizedHint = hint.toLocaleLowerCase("ru-RU");
+  const hintWords = normalizedWords(hint);
+  return list
+    .map((candidate) => {
+      const haystack = `${candidate.currentAlt || ""} ${candidate.sectionLabel || ""} ${candidate.context || ""} ${candidate.pageTitle || ""}`.toLocaleLowerCase("ru-RU");
+      let score = 0;
+      if (compact(candidate.currentAlt).toLocaleLowerCase("ru-RU") === normalizedHint) score += 30;
+      else if (haystack.includes(normalizedHint)) score += 12;
+      for (const word of hintWords) if (haystack.includes(word)) score += 2;
+      return { ...candidate, score };
+    })
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score || left.pagePath.localeCompare(right.pagePath) || left.matchIndex - right.matchIndex)
+    .slice(0, 6);
+}
+
+function imageDescription(candidate) {
+  const place = candidate.sectionLabel || candidate.pageTitle || candidate.pagePath || "сайт";
+  return `изображение «${candidate.currentAlt || "без описания"}» — ${place}`;
+}
+
+function resolveImageTarget(targetHint, inventory, pending = {}) {
+  const images = Array.isArray(inventory?.images) ? inventory.images : [];
+  const missingAlt = images.filter((item) => !item.currentAlt);
+  // An empty/vague hint plus exactly one image site-wide with no alt at all
+  // is unambiguous -- mirrors the single-phone-group auto-select below, and
+  // makes "improve my image SEO" a one-shot flow for the common case.
+  if (!compact(targetHint) && missingAlt.length === 1) {
+    const candidate = missingAlt[0];
+    if (pending.value) return assistantResult({ type: "change", kind: "image_alt", value: pending.value, targetHint, message: `Добавить alt-текст «${pending.value}» для ${imageDescription(candidate)}?`, candidates: [candidate], selectedCandidateId: candidate.candidateId });
+    return assistantResult({ targetHint, message: `Нашёл ${imageDescription(candidate)} без alt-текста. Какое описание добавить?`, dialog: { intent: "image", stage: "value", candidateId: candidate.candidateId } });
+  }
+  const options = rankImageCandidates(images, targetHint);
+  if (!options.length) return assistantResult({ targetHint, message: "На опубликованном сайте не нашлось подходящего изображения. Опишите его точнее — например, укажите раздел страницы.", dialog: { intent: "image", stage: "target", attempts: 1 } });
+  if (options.length > 1) {
+    return assistantResult({ targetHint, message: "Нашёл несколько подходящих изображений. Выберите нужное:", candidates: options, dialog: { intent: "image", stage: "candidate", targetHint, pendingValue: pending.value || "" } });
+  }
+  const candidate = options[0];
+  if (pending.value) return assistantResult({ type: "change", kind: "image_alt", value: pending.value, targetHint, message: `Изменить alt-текст для ${imageDescription(candidate)}?`, candidates: [candidate], selectedCandidateId: candidate.candidateId });
+  return assistantResult({ targetHint, message: `Нашёл ${imageDescription(candidate)}. Какое описание добавить?`, dialog: { intent: "image", stage: "value", candidateId: candidate.candidateId } });
+}
+
+function chooseImage(prompt, inventory, targetHint) {
+  const options = rankImageCandidates(inventory?.images, targetHint);
+  const index = ordinalIndex(prompt);
+  if (index >= 0 && options[index]) return options[index];
+  const lower = prompt.toLocaleLowerCase("ru-RU");
+  const byPage = options.filter((candidate) => lower.includes(compact(candidate.pageTitle).toLocaleLowerCase("ru-RU")) || lower.includes(compact(candidate.pagePath).toLocaleLowerCase("ru-RU")));
+  return byPage.length === 1 ? byPage[0] : options.length === 1 ? options[0] : null;
+}
+
 function resolveButtonTarget(targetHint, inventory, pending = {}) {
   const options = plausibleButtons(inventory, targetHint);
   if (!options.length) return assistantResult({ targetHint, message: `На опубликованном сайте не нашлась кнопка «${targetHint}». Напишите её текущий текст точнее.`, dialog: { intent: "button", stage: "target", attempts: 1 } });
@@ -362,6 +417,25 @@ function continueDialog(prompt, inventory, dialog) {
       const value = dialog.kind === "button_url" ? absoluteUrl(prompt) : compact(prompt).replace(/^(?:поставь|замени|измени)(?:\s+на)?\s+/iu, "").replace(/[«»"]+/gu, "").slice(0, 180);
       if (!value) return null;
       return assistantResult({ type: "change", kind: dialog.kind, value, targetHint: dialog.targetHint, message: `Изменить ${buttonDescription(candidate)}?`, candidates: [candidate], selectedCandidateId: candidate.candidateId });
+    }
+  }
+  if (dialog.intent === "image") {
+    if (dialog.stage === "target") {
+      const targetHint = compact(prompt).replace(/[«»".!?]+/gu, "");
+      return targetHint ? resolveImageTarget(targetHint, inventory) : null;
+    }
+    if (dialog.stage === "candidate") {
+      const candidate = chooseImage(prompt, inventory, dialog.targetHint);
+      if (!candidate) return resolveImageTarget(dialog.targetHint, inventory, { value: dialog.pendingValue });
+      if (dialog.pendingValue) return assistantResult({ type: "change", kind: "image_alt", value: dialog.pendingValue, targetHint: dialog.targetHint, message: `Изменить alt-текст для ${imageDescription(candidate)}?`, candidates: [candidate], selectedCandidateId: candidate.candidateId });
+      return assistantResult({ message: `Выбрано ${imageDescription(candidate)}. Какое описание добавить?`, targetHint: dialog.targetHint, dialog: { intent: "image", stage: "value", candidateId: candidate.candidateId } });
+    }
+    if (dialog.stage === "value") {
+      const candidate = (inventory?.images || []).find((item) => item.candidateId === dialog.candidateId);
+      if (!candidate) return null;
+      const value = compact(prompt).replace(/^(?:поставь|замени|измени|добавь)(?:\s+на)?\s+/iu, "").replace(/[«»"]+/gu, "").slice(0, 300);
+      if (!value) return null;
+      return assistantResult({ type: "change", kind: "image_alt", value, targetHint: dialog.targetHint || "", message: `Изменить alt-текст для ${imageDescription(candidate)}?`, candidates: [candidate], selectedCandidateId: candidate.candidateId });
     }
   }
   return null;
@@ -498,6 +572,10 @@ const EXPLAIN_TOPICS = [
   },
   {
     keywords: [/\balt\b/iu, /(?=.*(?:изображени|картинк))(?=.*описани)/iu],
+    // A request phrased as an instruction ("добавь alt для фото") is a real
+    // edit to propose, not a question to answer -- only explain the concept
+    // when the message doesn't also read like a command.
+    exclude: /добавь|добавить|поставь|поставить|напиши|напишите|укажи|укажите|пропиши|пропишите|сделай|сделать|измени|изменить|замени|заменить/iu,
     answer: "Alt-текст — это текстовое описание картинки для тех, кто её не видит: незрячих пользователей со экранным диктором и поисковых роботов. Пишите коротко и по смыслу («доставка заказов по Москве»), а не «картинка1». Чисто декоративные изображения можно оставить без alt."
   },
   {
@@ -535,7 +613,7 @@ const EXPLAIN_TOPICS = [
 ];
 
 function explainTopicAnswer(prompt) {
-  const topic = EXPLAIN_TOPICS.find((item) => item.keywords.some((re) => re.test(prompt)));
+  const topic = EXPLAIN_TOPICS.find((item) => item.keywords.some((re) => re.test(prompt)) && !(item.exclude && item.exclude.test(prompt)));
   return topic ? assistantResult({ type: "advice", kind: "advice", message: topic.answer }) : null;
 }
 
@@ -592,19 +670,21 @@ function explicitEditRequest(prompt) {
 async function askAi(ai, prompt, inventory, history = [], siteContext = {}) {
   if (!ai || typeof ai.run !== "function") return null;
   const buttonContext = (inventory?.candidates || []).slice(0, 40).map((item) => ({ text: item.text, url: item.url, page: item.pagePath }));
+  const imageContext = (inventory?.images || []).slice(0, 40).map((item) => ({ currentAlt: item.currentAlt, page: item.pagePath, section: item.sectionLabel }));
   const status = siteContext?.currentStatus || {};
   const siteFacts = {
     pages: inventory?.pageCount || 0,
     phones: inventory?.phones || [],
     schedules: inventory?.schedules || [],
     buttons: buttonContext,
+    images: imageContext,
     pageAvailable: status.pageAvailable,
     formsRequired: status.formsRequired,
     formsWorking: Boolean(status.webhookVerified && status.testLeadVerified),
     telegramConnected: status.telegramConnected,
     diagnosticsSummary: siteContext?.diagnostics?.summary || null
   };
-  const messages = [{ role: "system", content: `Ты полноценный AI-помощник SiteCare для владельца сайта. Пойми смысл сообщения и отвечай коротко, ясно и по-русски. Можно отвечать на любые вопросы о сайте, объяснять найденные элементы и предлагать улучшения — для этого используй kind=advice. Автоматически доступны только четыре безопасных действия: заменить выбранный телефон сразу во всех местах сайта, изменить график, текст или HTTPS-ссылку конкретной кнопки. Не выдумывай элементы и не обещай недоступное: используй данные опубликованного сайта. Если не хватает ровно одного значения, задай один естественный вопрос. Если вопрос не про сайт, не понятен, либо нужна сложная правка кода, дизайна — объясни это и предложи специалиста: supportSuggested=true. Верни только JSON {"kind":"phone|schedule|button_text|button_url|advice|unknown","value":"новое значение","targetHint":"текущий элемент","message":"ответ или вопрос","supportSuggested":false,"supportReason":""}. Никогда не утверждай, что изменение уже применено. Сайт: ${JSON.stringify(siteFacts)}` }, ...conversationContext(history), { role: "user", content: prompt }];
+  const messages = [{ role: "system", content: `Ты полноценный AI-помощник SiteCare для владельца сайта. Пойми смысл сообщения и отвечай коротко, ясно и по-русски. Можно отвечать на любые вопросы о сайте, объяснять найденные элементы и предлагать улучшения — для этого используй kind=advice. Автоматически доступны только пять безопасных действий: заменить выбранный телефон сразу во всех местах сайта, изменить график, текст или HTTPS-ссылку конкретной кнопки, или alt-текст конкретного изображения. Не выдумывай элементы и не обещай недоступное: используй данные опубликованного сайта. Если не хватает ровно одного значения, задай один естественный вопрос. Если вопрос не про сайт, не понятен, либо нужна сложная правка кода, дизайна — объясни это и предложи специалиста: supportSuggested=true. Верни только JSON {"kind":"phone|schedule|button_text|button_url|image_alt|advice|unknown","value":"новое значение","targetHint":"текущий элемент","message":"ответ или вопрос","supportSuggested":false,"supportReason":""}. Никогда не утверждай, что изменение уже применено. Сайт: ${JSON.stringify(siteFacts)}` }, ...conversationContext(history), { role: "user", content: prompt }];
   for (const model of AI_MODELS) {
     try {
       const raw = await ai.run(model, { messages, max_completion_tokens: 450, temperature: 0.1, top_p: 0.8 });
@@ -647,6 +727,9 @@ function finalizeProposal(proposal, inventory, usedAi = false, model = "local") 
   if (proposal.kind.startsWith("button_")) {
     if (!proposal.targetHint) return { ...askButtonTarget(), usedAi, model, assistantMode: usedAi ? "ai" : "local" };
     return { ...resolveButtonTarget(proposal.targetHint, inventory, { kind: proposal.kind, value: proposal.value }), usedAi, model, assistantMode: usedAi ? "ai" : "local" };
+  }
+  if (proposal.kind === "image_alt") {
+    return { ...resolveImageTarget(proposal.targetHint, inventory, { value: proposal.value }), usedAi, model, assistantMode: usedAi ? "ai" : "local" };
   }
   return assistantResult({ type: proposal.kind === "unknown" ? "clarification" : proposal.kind === "advice" ? "advice" : "change", ...proposal, usedAi, model });
 }

@@ -51,7 +51,8 @@ const PLATFORM_MIGRATIONS = [
   "gateway/migrations/0020_monitor_rollups.sql",
   "gateway/migrations/0021_ai_insights.sql",
   "gateway/migrations/0022_lead_notification_toggles.sql",
-  "gateway/migrations/0023_yandex_metrica.sql"
+  "gateway/migrations/0023_yandex_metrica.sql",
+  "gateway/migrations/0024_image_alt_rules.sql"
 ];
 
 test("site-wide loader safely recognizes visible phone numbers", () => {
@@ -90,6 +91,8 @@ test("site-wide loader supports dynamic Tilda blocks and refreshes configuration
   assert.match(loader, /a\[href\^='tel:'\]/u);
   assert.match(loader, /buttonRules/u);
   assert.match(loader, /phoneRules/u);
+  assert.match(loader, /contentRules/u);
+  assert.match(loader, /originalAttributes/u);
   assert.match(loader, /\/applied\?key=/u);
 });
 
@@ -237,6 +240,79 @@ test("one site-wide rule replaces an unformatted long phone in every visible pla
   assert.equal(header.nodeValue, "+7 999 123-45-67");
   assert.equal(contacts.nodeValue, "Телефон: +7 999 123-45-67");
   assert.equal(unrelated.nodeValue, "Заказ 222222222222222");
+  assert.equal(attributes.get("data-sitecare-status"), "ready");
+});
+
+test("site-wide loader sets image alt text via an image_alt content rule", async () => {
+  const imageAttrs = new Map([["src", "/photo-1.jpg"], ["alt", "Ремонт кухни"]]);
+  const image = {
+    tagName: "IMG",
+    isConnected: true,
+    getAttribute(name) { return imageAttrs.has(name) ? imageAttrs.get(name) : null; },
+    setAttribute(name, value) { imageAttrs.set(name, value); },
+    removeAttribute(name) { imageAttrs.delete(name); },
+    closest(selector) { return selector === "[id^='rec']" ? { id: "rec50" } : null; }
+  };
+  const attributes = new Map();
+  const document = {
+    nodeType: 9,
+    readyState: "complete",
+    currentScript: {
+      dataset: { sitecareSite: "site-test", sitecareKey: "abcdefghijklmnopqrstuvwxyz123456" },
+      src: "https://gateway.example.test/sitecare-loader.js"
+    },
+    scripts: [],
+    documentElement: { setAttribute(name, value) { attributes.set(name, value); } },
+    addEventListener() {},
+    querySelectorAll(selector) { return selector === "img" ? [image] : []; },
+    createTreeWalker() { return { nextNode() { return null; } }; }
+  };
+  const location = { origin: "https://example.test", pathname: "/", href: "https://example.test/" };
+  const config = {
+    enabled: true,
+    origin: location.origin,
+    scope: "site",
+    version: 1,
+    contentRules: [{
+      field: "image_alt",
+      candidateId: "img_rec50",
+      pagePath: "/",
+      blockId: "rec50",
+      matchIndex: 0,
+      scope: "element",
+      originalValue: "Ремонт кухни",
+      newValue: "Готовый ремонт кухни в скандинавском стиле",
+      version: 1
+    }]
+  };
+  class MutationObserver {
+    observe() {}
+    disconnect() {}
+  }
+  const window = {
+    location,
+    setTimeout() { return 1; },
+    setInterval() { return 1; },
+    addEventListener() {}
+  };
+  const context = {
+    document,
+    window,
+    location,
+    NodeFilter: { SHOW_TEXT: 4 },
+    MutationObserver,
+    URL,
+    clearTimeout() {},
+    fetch: async (url) => url.includes("/config?")
+      ? { ok: true, json: async () => config }
+      : { ok: true, json: async () => ({ ok: true }) }
+  };
+
+  new Script(loaderJavascript()).runInNewContext(context);
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(image.getAttribute("alt"), "Готовый ремонт кухни в скандинавском стиле");
   assert.equal(attributes.get("data-sitecare-status"), "ready");
 });
 
@@ -1487,6 +1563,163 @@ test("one central platform provisions a client, isolates access and receives for
     assert.equal(page.status, 200);
     assert.match(await page.text(), /Всё важное о сайте/iu);
     assert.match(page.headers.get("Content-Security-Policy"), /frame-ancestors 'none'/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await runtime.dispose();
+  }
+});
+
+test("image alt text goes through propose, apply, live-verify and rollback", async () => {
+  const { runtime, database } = await databaseWithMigrations();
+  const originalFetch = globalThis.fetch;
+  let publishedLoaderCode = "";
+  globalThis.fetch = async (url, options = {}) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === "api.openai.com") {
+      return Response.json({
+        output_text: JSON.stringify({
+          reply: "Добавил описание для найденной картинки.",
+          mode: "change",
+          change_kind: "image_alt",
+          change_value: "Ремонт кухни в скандинавском стиле",
+          target_hint: "",
+          support_suggested: false,
+          support_reason: "",
+          support_summary: "",
+          suggestions: []
+        })
+      });
+    }
+    if (parsed.hostname === "image-client.example.test" && parsed.pathname === "/page") {
+      return new Response(`<!doctype html><html><head>${publishedLoaderCode}</head><body><div id="rec1"><h2>Наши работы</h2><img src="/photo.jpg"></div></body></html>`, {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      });
+    }
+    if (parsed.hostname === "image-client.example.test") {
+      // A distinct, image-less and link-less root page keeps the site-wide
+      // crawl (which visits both target_url and the site root) from finding
+      // the same image twice under two different page paths.
+      return new Response(`<!doctype html><html><head>${publishedLoaderCode}</head><body><p>Главная страница</p></body></html>`, {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  try {
+    const environment = { ...env(database), OPENAI_API_KEY: "sk-test-image-alt" };
+    const platformBootstrap = await gateway.fetch(request("/v1/admin/platform/bootstrap", {
+      method: "POST",
+      token: ADMIN_TOKEN,
+      body: { email: "owner-img@example.test", displayName: "Owner", password: "Owner password 123" },
+      origin: null
+    }), environment);
+    assert.equal(platformBootstrap.status, 200);
+    const loginResponse = await gateway.fetch(request("/v1/platform/auth/login", {
+      method: "POST",
+      body: { email: "owner-img@example.test", password: "Owner password 123", remember: true }
+    }), environment);
+    const login = await body(loginResponse);
+    const operatorCookie = loginResponse.headers.get("Set-Cookie").split(";")[0];
+
+    const clientResponse = await gateway.fetch(request("/v1/platform/operator/accounts", {
+      method: "POST",
+      cookie: operatorCookie,
+      csrf: login.csrf,
+      body: { name: "Клиент с картинкой", ownerEmail: "image-client@example.test", ownerName: "Client" }
+    }), environment);
+    const client = await body(clientResponse);
+    const invite = new URL(client.inviteUrl).searchParams.get("token");
+    const acceptedResponse = await gateway.fetch(request("/v1/platform/invites/accept", {
+      method: "POST",
+      body: { token: invite, email: "image-client@example.test", displayName: "Client", password: "Client password 123" }
+    }), environment);
+    const accepted = await body(acceptedResponse);
+    const clientCookie = acceptedResponse.headers.get("Set-Cookie").split(";")[0];
+
+    const createSiteResponse = await gateway.fetch(request(`/v1/platform/accounts/${client.accountId}/sites`, {
+      method: "POST",
+      cookie: clientCookie,
+      csrf: accepted.csrf,
+      body: { name: "Портфолио", url: "https://image-client.example.test/page", scope: "site" }
+    }), environment);
+    assert.equal(createSiteResponse.status, 201);
+    const createdSite = await body(createSiteResponse);
+    assert.equal(createdSite.formRequired, false);
+    const loaderKey = /data-sitecare-key="([A-Za-z0-9_-]+)"/u.exec(createdSite.loaderCode)?.[1];
+    assert.ok(loaderKey);
+
+    publishedLoaderCode = createdSite.loaderCode;
+    const loaderCheck = await body(await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/check`, {
+      method: "POST",
+      cookie: clientCookie,
+      csrf: accepted.csrf,
+      body: {}
+    }), environment));
+    assert.equal(loaderCheck.loaderOk, true);
+
+    const proposalResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/assistant`, {
+      method: "POST",
+      cookie: clientCookie,
+      csrf: accepted.csrf,
+      body: { prompt: "Добавь описание для картинки без alt-текста" }
+    }), environment);
+    assert.equal(proposalResponse.status, 200);
+    const proposal = await body(proposalResponse);
+    assert.equal(proposal.type, "change");
+    assert.equal(proposal.kind, "image_alt");
+    assert.equal(proposal.value, "Ремонт кухни в скандинавском стиле");
+    assert.equal(proposal.candidates.length, 1);
+    assert.ok(proposal.suggestedCandidateId);
+    assert.match(proposal.suggestedCandidateId, /^img_/u);
+
+    const appliedResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/changes/apply`, {
+      method: "POST",
+      cookie: clientCookie,
+      csrf: accepted.csrf,
+      body: { kind: proposal.kind, value: proposal.value, candidateId: proposal.suggestedCandidateId }
+    }), environment);
+    assert.equal(appliedResponse.status, 200);
+    const applied = await body(appliedResponse);
+    assert.equal(applied.status, "pending");
+    const appliedVersion = applied.version;
+
+    const changeRecordAfterApply = await database.prepare(
+      "SELECT status FROM platform_change_records WHERE site_id = ? AND version = ?"
+    ).bind(createdSite.siteId, appliedVersion).first();
+    assert.equal(changeRecordAfterApply.status, "pending");
+
+    const config = await body(await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/config?key=${loaderKey}`, {
+      origin: "https://image-client.example.test"
+    }), environment));
+    assert.equal(config.contentRules.length, 1);
+    assert.equal(config.contentRules[0].field, "image_alt");
+    assert.equal(config.contentRules[0].newValue, "Ремонт кухни в скандинавском стиле");
+
+    const appliedReportResponse = await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/applied?key=${loaderKey}`, {
+      method: "POST",
+      origin: "https://image-client.example.test",
+      body: JSON.stringify({ version: appliedVersion, pathname: "/page", contentCount: 1, contentVerified: true }),
+      contentType: "text/plain;charset=UTF-8"
+    }), environment);
+    assert.equal(appliedReportResponse.status, 200);
+    const confirmedRecord = await database.prepare(
+      "SELECT status FROM platform_change_records WHERE site_id = ? AND version = ?"
+    ).bind(createdSite.siteId, appliedVersion).first();
+    assert.equal(confirmedRecord.status, "confirmed");
+
+    const rollbackResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/overrides/rollback`, {
+      method: "POST",
+      cookie: clientCookie,
+      csrf: accepted.csrf,
+      body: { version: appliedVersion - 1 }
+    }), environment);
+    assert.equal(rollbackResponse.status, 200);
+    const configAfterRollback = await body(await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/config?key=${loaderKey}`, {
+      origin: "https://image-client.example.test"
+    }), environment));
+    assert.equal(configAfterRollback.contentRules.length, 0);
   } finally {
     globalThis.fetch = originalFetch;
     await runtime.dispose();

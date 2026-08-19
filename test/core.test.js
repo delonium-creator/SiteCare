@@ -144,6 +144,14 @@ test("rejects empty, oversized and control-character field values", () => {
   assert.throws(() => parseCommand("Измени телефон", current), /лучше взять в кавычки/iu);
 });
 
+test("validates image alt text length and control characters", () => {
+  assert.throws(() => validateFieldValue("imageAlt", ""), /от 1 до 300/iu);
+  assert.equal(validateFieldValue("imageAlt", "A"), "A");
+  assert.equal(validateFieldValue("imageAlt", "x".repeat(300)), "x".repeat(300));
+  assert.throws(() => validateFieldValue("imageAlt", "x".repeat(301)), /от 1 до 300/iu);
+  assert.throws(() => validateFieldValue("imageAlt", "Фото <script>"), /недопустимые/iu);
+});
+
 test("public config omits editable values while disabled", () => {
   const result = publicConfig({
     ...current,

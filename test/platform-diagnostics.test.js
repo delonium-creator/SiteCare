@@ -33,6 +33,31 @@ test("a plain visible phone next to an email is recognized without technical ids
   assert.ok(!inventory.phones.some((phone) => phone.includes("1620232389262")));
 });
 
+test("extracts image candidates with and without existing alt text", () => {
+  const inventory = extractEditableInventory(`<!doctype html><html lang="ru"><head><title>Портфолио</title></head><body><div id="rec30"><h2>Наши работы</h2><img src="/photo-1.jpg" alt="Ремонт кухни"><img src="/photo-2.jpg"></div></body></html>`, "https://example.com/");
+  assert.equal(inventory.images.length, 2);
+  assert.match(inventory.images[0].candidateId, /^img_/u);
+  assert.equal(inventory.images[0].blockId, "rec30");
+  assert.equal(inventory.images[0].matchIndex, 0);
+  assert.equal(inventory.images[0].currentAlt, "Ремонт кухни");
+  assert.equal(inventory.images[0].sectionLabel, "Раздел «Наши работы»");
+  assert.equal(inventory.images[1].currentAlt, "");
+  assert.equal(inventory.images[1].matchIndex, 1);
+});
+
+test("whole-site scan aggregates image candidates across pages", async () => {
+  const pages = new Map([
+    ["https://example.com/", `<!doctype html><html><body><img src="/a.jpg"><a href="/about">О нас</a></body></html>`],
+    ["https://example.com/about", `<!doctype html><html><body><img src="/b.jpg" alt="О компании"></body></html>`]
+  ]);
+  const fetchImpl = async (url) => pages.has(url)
+    ? new Response(pages.get(url), { status: 200, headers: { "Content-Type": "text/html" } })
+    : new Response("not found", { status: 404, headers: { "Content-Type": "text/html" } });
+  const result = await scanSiteInventory({ target_url: "https://example.com/", scope: "site" }, fetchImpl, { maxPages: 10 });
+  assert.equal(result.images.length, 2);
+  assert.ok(result.images.some((image) => image.currentAlt === "О компании"));
+});
+
 test("whole-site scan aggregates duplicate metadata and failed internal pages", async () => {
   const pages = new Map([
     ["https://example.com/", `<!doctype html><html lang="ru"><head><title>Один заголовок страницы</title><meta name="description" content="Одинаковое описание"><meta name="viewport" content="width=device-width"><link rel="canonical" href="https://example.com/"></head><body><h1>Главная</h1><a href="/about">О нас</a><a href="/missing">Пропавшая</a></body></html>`],

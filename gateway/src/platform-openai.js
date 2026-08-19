@@ -10,7 +10,7 @@ const RESPONSE_SCHEMA = Object.freeze({
   properties: {
     reply: { type: "string" },
     mode: { type: "string", enum: ["answer", "clarification", "change", "specialist"] },
-    change_kind: { type: "string", enum: ["none", "phone", "schedule", "button_text", "button_url"] },
+    change_kind: { type: "string", enum: ["none", "phone", "schedule", "button_text", "button_url", "image_alt"] },
     change_value: { type: "string" },
     target_hint: { type: "string" },
     support_suggested: { type: "boolean" },
@@ -43,8 +43,8 @@ const ASSISTANT_INSTRUCTIONS = `Ты — SiteCare, личный техничес
 1. Отвечай по-русски, естественно и по существу. Можно вести полноценный диалог и отвечать на обычные вопросы о сайте, SEO, доступности, скорости, формах, индексации, безопасности и работе SiteCare.
 2. Опирайся только на SITE_CONTEXT и историю диалога. Не выдавай предположение за факт. Если причина проблемы не доказана, явно называй её вероятной и объясняй, какие данные подтверждают или опровергают гипотезу.
 3. Не утверждай, что выполнил проверку, которой нет в SITE_CONTEXT. Не обещай “SEO на уровне человека”, взломостойкость или абсолютное отсутствие уязвимостей. Объясняй границы автоматической проверки.
-4. Автоматически доступны только безопасные изменения: замена выбранного телефона, графика работы, текста конкретной кнопки или HTTPS-ссылки конкретной кнопки. Любое изменение сначала становится предложением и применяется только после отдельного подтверждения клиента.
-5. Если телефонов или одинаковых кнопок несколько, сначала уточни цель обычными словами. Не выбирай элемент наугад. Для телефона укажи текущий номер в target_hint; для кнопки — её текущую видимую надпись.
+4. Автоматически доступны только безопасные изменения: замена выбранного телефона, графика работы, текста конкретной кнопки, HTTPS-ссылки конкретной кнопки или alt-текста конкретного изображения. Любое изменение сначала становится предложением и применяется только после отдельного подтверждения клиента.
+5. Если телефонов, одинаковых кнопок или подходящих изображений несколько, сначала уточни цель обычными словами. Не выбирай элемент наугад. Для телефона укажи текущий номер в target_hint; для кнопки — её текущую видимую надпись; для изображения — его текущее описание (если есть) или расположение на странице.
 6. Не предлагай произвольное вмешательство в HTML, JavaScript или дизайн. Для сложной работы объясни, что именно требуется, и только уместно предложи специалиста. Ничего не передавай автоматически: support_suggested лишь показывает клиенту необязательное предложение связаться со специалистом.
 7. Не продавай услугу без связи с запросом клиента. Если специалист действительно нужен, кратко сформулируй ожидаемый результат и исходные данные в support_summary.
 8. Не повторяй один и тот же вопрос, если ответ уже есть в истории. Если запрос широкий, сначала дай полезный ответ из имеющихся данных, затем предложи максимум три понятных следующих шага.
@@ -82,7 +82,8 @@ function boundedContext(siteContext) {
       pageCount: source.inventory?.pageCount || 0,
       phones: (source.inventory?.phones || []).slice(0, 20),
       schedules: (source.inventory?.schedules || []).slice(0, 15),
-      buttons: (source.inventory?.buttons || []).slice(0, 35)
+      buttons: (source.inventory?.buttons || []).slice(0, 35),
+      images: (source.inventory?.images || []).slice(0, 35)
     },
     monitoring: source.monitoring || {}
   });
@@ -108,7 +109,7 @@ function normalizedResult(payload, model) {
     throw new Error("OPENAI_INVALID_RESPONSE");
   }
   const modes = new Set(["answer", "clarification", "change", "specialist"]);
-  const kinds = new Set(["none", "phone", "schedule", "button_text", "button_url"]);
+  const kinds = new Set(["none", "phone", "schedule", "button_text", "button_url", "image_alt"]);
   const mode = modes.has(String(parsed.mode)) ? String(parsed.mode) : "clarification";
   const changeKind = kinds.has(String(parsed.change_kind)) ? String(parsed.change_kind) : "none";
   const reply = safeMessageText(parsed.reply, 1600);
