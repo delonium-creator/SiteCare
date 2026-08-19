@@ -138,4 +138,22 @@ export async function sendSupportReplyEmail(env, { to, siteName, chatUrl, reques
   return deliverEmail(env, { to, subject, html, text, requestId: `support-reply-${requestId}` });
 }
 
+export async function sendNewLeadEmail(env, { to, siteName, contact, message, formLabel, page, requestId }) {
+  const safeSite = escapeHtml(siteName || "Сайт");
+  const safeContact = escapeHtml(contact || "Контакты не указаны");
+  const safeMessage = escapeHtml(message || "");
+  const safeFormLabel = escapeHtml(formLabel || "Форма на сайте");
+  const safePage = escapeHtml(page || "");
+  const subject = `Новая заявка · ${siteName || "SiteCare"}`;
+  const text = [
+    `Новая заявка на сайте «${siteName || "Сайт"}».`,
+    "",
+    contact || "Контакты не указаны",
+    message || "",
+    `${formLabel || "Форма на сайте"} · ${page || ""}`
+  ].filter(Boolean).join("\n");
+  const html = `<!doctype html><html lang="ru"><body style="margin:0;background:#f5f6fb;color:#17203a;font:16px/1.5 Arial,sans-serif"><div style="max-width:560px;margin:30px auto;background:#fff;border:1px solid #e2e5ef;border-radius:18px;padding:28px"><h1 style="font-size:24px;margin:0 0 12px">Новая заявка</h1><p>Сайт «${safeSite}».</p><p style="padding:14px;border-radius:12px;background:#f7f5ff"><b>${safeContact}</b>${safeMessage ? `<br>${safeMessage}` : ""}</p><p style="color:#69738d">${safeFormLabel}${safePage ? ` · ${safePage}` : ""}</p></div></body></html>`;
+  return deliverEmail(env, { to, subject, html, text, requestId: `lead-${requestId}` });
+}
+
 export const emailInternals = Object.freeze({ addressOnly, configuredFrom, escapeHtml, validFrom });

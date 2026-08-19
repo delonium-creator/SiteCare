@@ -45,6 +45,7 @@ import {
   emailDeliveryConfigured,
   emailTransport,
   sendEmailSetupTest,
+  sendNewLeadEmail,
   sendPasswordResetEmail,
   sendSupportReplyEmail,
   sendSupportRequestEmail
@@ -1007,6 +1008,23 @@ async function updateSite(request, env, user, siteId) {
       .bind(name, targetUrl, status === "active" ? 1 : 0, now, siteId)
   ]);
   await audit(env, user, site.account_id, "site.update", "site", siteId, status);
+  return json({ ok: true });
+}
+
+async function updateLeadNotifications(request, env, user, siteId) {
+  const { site } = await siteAccess(env, user, siteId, "manager");
+  const body = await requestJson(request);
+  const emailEnabled = body.emailEnabled === undefined ? Number(site.lead_email_notify_enabled) === 1 : Boolean(body.emailEnabled);
+  const rawEmail = body.notifyEmail === undefined ? String(site.lead_notify_email || "") : safeText(body.notifyEmail, 200);
+  const notifyEmail = rawEmail ? normalizeEmail(rawEmail) : "";
+  const now = new Date().toISOString();
+  await env.GATEWAY_DB.prepare(
+    "UPDATE platform_sites SET lead_email_notify_enabled = ?, lead_notify_email = ?, updated_at = ? WHERE site_id = ?"
+  ).bind(emailEnabled ? 1 : 0, notifyEmail || null, now, siteId).run();
+  if (body.telegramEnabled !== undefined) {
+    await env.GATEWAY_DB.prepare("UPDATE telegram_destinations SET notify_leads = ? WHERE site_id = ?").bind(body.telegramEnabled ? 1 : 0, siteId).run();
+  }
+  await audit(env, user, site.account_id, "site.lead_notifications", "site", siteId, "Изменены уведомления о заявках.");
   return json({ ok: true });
 }
 
@@ -2243,28 +2261,45 @@ async function billingCheckout(request, env, user, accountId) {
 }
 
 async function notifyNewLead(env, site, lead) {
-  if (!env.TELEGRAM_BOT_TOKEN || !lead) return;
-  const destination = await env.GATEWAY_DB.prepare(
-    "SELECT chat_id FROM telegram_destinations WHERE site_id = ? AND enabled = 1"
-  ).bind(site.site_id).first();
-  if (!destination?.chat_id) return;
+  if (!lead) return;
   const contact = [lead.payload.name, lead.payload.phone, lead.payload.email].filter(Boolean).join(" · ") || "Контакты не указаны";
   const page = lead.pageTitle || (() => { try { return new URL(lead.pageUrl).pathname || "/"; } catch { return "Сайт"; } })();
-  const lines = [
-    "📩 Новая заявка",
-    site.name,
-    contact,
-    lead.payload.message ? safeText(lead.payload.message, 500) : "",
-    `${lead.formLabel} · ${page}`
-  ].filter(Boolean);
-  try { await telegramSendMessage(env.TELEGRAM_BOT_TOKEN, destination.chat_id, lines.join("\n")); }
-  catch { /* A Telegram outage must not make Tilda repeat the webhook. */ }
+  if (env.TELEGRAM_BOT_TOKEN) {
+    const destination = await env.GATEWAY_DB.prepare(
+      "SELECT chat_id FROM telegram_destinations WHERE site_id = ? AND enabled = 1 AND notify_leads = 1"
+    ).bind(site.site_id).first();
+    if (destination?.chat_id) {
+      const lines = [
+        "📩 Новая заявка",
+        site.name,
+        contact,
+        lead.payload.message ? safeText(lead.payload.message, 500) : "",
+        `${lead.formLabel} · ${page}`
+      ].filter(Boolean);
+      try { await telegramSendMessage(env.TELEGRAM_BOT_TOKEN, destination.chat_id, lines.join("\n")); }
+      catch { /* A Telegram outage must not make Tilda repeat the webhook. */ }
+    }
+  }
+  if (Number(site.lead_email_notify_enabled) === 1 && emailDeliveryConfigured(env)) {
+    let to = String(site.lead_notify_email || "").trim();
+    if (!to) {
+      const owner = await env.GATEWAY_DB.prepare(
+        "SELECT u.email FROM platform_memberships m JOIN platform_users u ON u.user_id = m.user_id WHERE m.account_id = ? ORDER BY CASE m.role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 WHEN 'manager' THEN 3 ELSE 4 END LIMIT 1"
+      ).bind(site.account_id).first();
+      to = owner?.email || "";
+    }
+    if (to) {
+      try {
+        await sendNewLeadEmail(env, { to, siteName: site.name, contact, message: lead.payload.message, formLabel: lead.formLabel, page, requestId: lead.leadId || randomToken(12) });
+      } catch { /* A mail-provider outage must not make Tilda repeat the webhook. */ }
+    }
+  }
 }
 
 async function formWebhook(request, env, siteId) {
   if (!SITE_ID_PATTERN.test(siteId)) fail("Адрес webhook недействителен.", 401, "UNAUTHORIZED");
   const site = await env.GATEWAY_DB.prepare(
-    "SELECT s.site_id, s.account_id, s.name, s.target_url, s.form_required, s.expected_form_count, s.webhook_token_hash, s.status, a.status AS account_status, a.plan, a.trial_ends_at, b.status AS billing_status, b.current_period_end, f.status AS feature_status, f.current_period_end AS feature_period_end FROM platform_sites s JOIN platform_accounts a ON a.account_id = s.account_id LEFT JOIN platform_billing b ON b.account_id = a.account_id LEFT JOIN platform_account_features f ON f.account_id = a.account_id AND f.feature_key = 'control' WHERE s.site_id = ?"
+    "SELECT s.site_id, s.account_id, s.name, s.target_url, s.form_required, s.expected_form_count, s.webhook_token_hash, s.status, s.lead_email_notify_enabled, s.lead_notify_email, a.status AS account_status, a.plan, a.trial_ends_at, b.status AS billing_status, b.current_period_end, f.status AS feature_status, f.current_period_end AS feature_period_end FROM platform_sites s JOIN platform_accounts a ON a.account_id = s.account_id LEFT JOIN platform_billing b ON b.account_id = a.account_id LEFT JOIN platform_account_features f ON f.account_id = a.account_id AND f.feature_key = 'control' WHERE s.site_id = ?"
   ).bind(siteId).first();
   const provided = new URL(request.url).searchParams.get("token") || "";
   const providedHash = await digest("platform-form-webhook", provided);
@@ -2546,10 +2581,19 @@ async function siteSelectionResult(env, user, siteId) {
 }
 
 async function telegramStatus(env, user, siteId) {
-  await siteAccess(env, user, siteId, "viewer");
-  const row = await env.GATEWAY_DB.prepare("SELECT chat_type, linked_at, enabled FROM telegram_destinations WHERE site_id = ?").bind(siteId).first();
+  const { site } = await siteAccess(env, user, siteId, "viewer");
+  const row = await env.GATEWAY_DB.prepare("SELECT chat_type, linked_at, enabled, notify_leads FROM telegram_destinations WHERE site_id = ?").bind(siteId).first();
   const bot = await env.GATEWAY_DB.prepare("SELECT value FROM gateway_settings WHERE key = 'bot_username'").first();
-  return json({ ok: true, configured: Boolean(row?.enabled), destination: row?.enabled ? row.chat_type === "private" ? "личный чат" : "группа" : null, linkedAt: row?.linked_at || null, botUsername: bot?.value || null });
+  return json({
+    ok: true,
+    configured: Boolean(row?.enabled),
+    destination: row?.enabled ? row.chat_type === "private" ? "личный чат" : "группа" : null,
+    linkedAt: row?.linked_at || null,
+    botUsername: bot?.value || null,
+    notifyLeads: row ? Number(row.notify_leads) === 1 : true,
+    emailNotifyEnabled: Number(site.lead_email_notify_enabled) === 1,
+    notifyEmail: site.lead_notify_email || ""
+  });
 }
 
 async function telegramConnect(request, env, user, siteId) {
@@ -2902,7 +2946,7 @@ export async function handlePlatformRoute(request, env, path) {
 
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})$/u.exec(path);
   if (request.method === "PATCH" && match) return updateSite(request, env, user, match[1]);
-  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(check|integration|report|content-changes|incidents|health-history|insights)$/u.exec(path);
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(check|integration|report|content-changes|incidents|health-history|insights|lead-notifications)$/u.exec(path);
   if (match) {
     if (request.method === "POST" && match[2] === "check") return checkOneSite(env, user, match[1]);
     if (request.method === "GET" && match[2] === "integration") return integration(request, env, user, match[1]);
@@ -2920,6 +2964,7 @@ export async function handlePlatformRoute(request, env, path) {
     if (request.method === "GET" && match[2] === "insights") {
       return siteInsights(env, user, match[1], Number(new URL(request.url).searchParams.get("limit") || 5));
     }
+    if (request.method === "PATCH" && match[2] === "lead-notifications") return updateLeadNotifications(request, env, user, match[1]);
   }
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/insights\/(\d+)\/dismiss$/u.exec(path);
   if (request.method === "POST" && match) return dismissInsight(env, user, match[1], match[2]);

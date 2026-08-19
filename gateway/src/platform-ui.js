@@ -351,15 +351,35 @@ export function platformHtml(nonce) {
 
     async function telegramDialog(){
       const a=account(),s=site();
-      if(!s){showDialog('Telegram-уведомления','<div class="notice">Сначала подключите сайт.</div>');return}
+      if(!s){showDialog('Уведомления','<div class="notice">Сначала подключите сайт.</div>');return}
       try{
         const t=await api('/v1/platform/sites/'+encodeURIComponent(s.site_id)+'/telegram/status');
         s._telegram=t;
         const canChange=canManageSite(a);
-        const content='<p>SiteCare сообщит только о сбое сайта или формы и об их восстановлении.</p>'+(t.configured
+        const telegramBlock='<p>SiteCare сообщит о сбое сайта или формы и об их восстановлении.</p>'+(t.configured
           ?'<div class="success"><b>Telegram подключён</b><br>Получатель: '+h(t.destination)+' · '+h(fmt(t.linkedAt))+'</div><div class="dialog-actions"><button class="primary" data-action="telegram-test" '+(!canChange?'disabled':'')+'>Отправить тест</button><button class="danger" data-action="telegram-disconnect" '+(!canChange?'disabled':'')+'>Отключить</button></div>'
           :'<div class="steps"><div class="step" data-step="1">Нажмите «Подключить Telegram».</div><div class="step" data-step="2">В официальном боте SiteCare нажмите Start.</div><div class="step" data-step="3">Вернитесь в это окно и нажмите «Обновить статус».</div></div><div class="dialog-actions"><button class="ghost" data-action="telegram-dialog">Обновить статус</button><button class="primary" data-action="telegram-connect" '+(!canChange?'disabled':'')+'>Подключить Telegram</button></div>');
-        showDialog('Telegram-уведомления',content);
+        const notifyBlock='<div class="settings-section-head" style="margin:20px 0 8px"><h3 style="margin:0">Уведомления о новых заявках</h3></div><p class="muted small" style="margin:0 0 10px">Если приём заявок в Tilda уже уведомляет вас (почта или свой Telegram-бот), эти переключатели можно оставить выключенными — иначе о заявке придёт два сообщения.</p><form id="leadNotifyForm">'
+          +(t.configured?'<label class="remember"><input type="checkbox" id="notifyLeadsTelegram" '+(t.notifyLeads?'checked':'')+' '+(!canChange?'disabled':'')+'><span><b>Присылать в Telegram</b></span></label>'
+            :'<p class="muted small">Подключите Telegram выше, чтобы получать в нём заявки.</p>')
+          +'<label class="remember" style="margin-top:8px"><input type="checkbox" id="notifyLeadsEmail" '+(t.emailNotifyEnabled?'checked':'')+' '+(!canChange?'disabled':'')+'><span><b>Присылать на email</b></span></label>'
+          +'<div class="field" id="notifyEmailField" style="margin-top:8px'+(t.emailNotifyEnabled?'':';display:none')+'"><label for="notifyEmailInput" class="hidden">Email для уведомлений</label><input id="notifyEmailInput" type="email" placeholder="По умолчанию — почта владельца кабинета" value="'+h(t.notifyEmail)+'" '+(!canChange?'disabled':'')+'></div>'
+          +'<div class="dialog-actions" style="margin-top:12px"><button class="primary" type="submit" '+(!canChange?'disabled':'')+'>Сохранить</button></div></form>';
+        showDialog('Уведомления',telegramBlock+notifyBlock);
+        if(canChange){
+          $('notifyLeadsEmail').onchange=()=>{$('notifyEmailField').style.display=$('notifyLeadsEmail').checked?'':'none'};
+          $('leadNotifyForm').onsubmit=async e=>{
+            e.preventDefault();const b=e.submitter;
+            try{
+              busy(b,true);
+              const payload={emailEnabled:$('notifyLeadsEmail').checked,notifyEmail:$('notifyEmailInput').value.trim()};
+              if(t.configured)payload.telegramEnabled=$('notifyLeadsTelegram').checked;
+              await api('/v1/platform/sites/'+encodeURIComponent(s.site_id)+'/lead-notifications',{method:'PATCH',body:JSON.stringify(payload)});
+              dialogDirty=false;
+              toast('Настройки уведомлений сохранены.');
+            }catch(err){toast(err.message)}finally{busy(b,false)}
+          };
+        }
       }catch(err){toast(err.message)}
     }
     function renderSettings(a,s){const canInvite=canManageAccount(a);$('view').innerHTML=pageHead('Настройки','Настройки кабинета','Оплата, доступы и дополнительные сайты.')+billingBanner(a)+'<div class="two-col"><div><section class="card"><div class="card-head"><div><h2>Подписка SiteCare</h2><p>Один понятный продукт без лишних тарифов</p></div><span class="pill '+(a.billing.canChange?'ok':'warn')+'">'+h(a.billing.label)+'</span></div><div class="client-summary"><div class="summary-cell"><span>Основной сайт</span><b>Включён</b></div><div class="summary-cell"><span>Дополнительные сайты</span><b>'+a.billing.extraSiteSlots+'</b></div><div class="summary-cell"><span>Доступ до</span><b>'+fmt(a.billing.currentPeriodEnd)+'</b></div></div><div class="dialog-actions"><button class="primary" data-action="checkout">'+(a.billing.status==='active'?'Управление оплатой':'Подключить оплату')+'</button></div></section><section class="card"><div class="card-head"><div><h2>Ваши сайты</h2><p>Если сайт один, переключатель нигде не показывается</p></div>'+(canInvite?'<button class="secondary" data-action="add-site">Подключить ещё сайт</button>':'')+'</div>'+(a.sites.length?a.sites.map(x=>'<div class="site-row"><div class="row spread wrap"><div><b>'+h(x.name)+'</b><p>'+h(new URL(x.target_url).hostname)+'</p></div><span class="pill '+(x.page_ok===1?'ok':x.page_ok===0?'bad':'warn')+'">'+(x.page_ok===1?'Работает':x.page_ok===0?'Нужна проверка':'Настройка')+'</span></div><details style="margin-top:10px"><summary class="small muted">Технические сведения</summary><p class="site-url">'+h(x.target_url)+'</p><button class="ghost" data-action="integration" data-site="'+h(x.site_id)+'">Инструкция подключения</button></details></div>').join(''):empty('Сайт ещё не подключён.'))+'</section></div><aside><section class="card"><div class="card-head"><div><h2>Доступ к кабинету</h2><p>Сотрудники и роли</p></div>'+(canInvite?'<button class="secondary" data-action="invite">Пригласить</button>':'')+'</div><div class="list">'+a.members.map(m=>'<div class="list-row"><div><b>'+h(m.display_name)+'</b><p>'+h(m.email)+'</p></div><span class="pill neutral">'+h({owner:'Владелец',admin:'Администратор',manager:'Менеджер',viewer:'Наблюдатель'}[m.role]||m.role)+'</span></div>').join('')+'</div></section><section class="card"><h3>Профиль</h3><p class="muted">'+h(state.user.display_name)+'<br>'+h(state.user.email)+'</p><button class="ghost" data-action="password">Сменить пароль</button></section></aside></div>'}
