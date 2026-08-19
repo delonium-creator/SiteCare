@@ -58,6 +58,30 @@ test("insightDedupeKey pairs a site with an insight type", () => {
   assert.equal(insightDedupeKey("site_1", "leads"), "site_1:leads");
 });
 
+test("computeFactsDelta omits traffic fields entirely when the site has no Yandex Metrica connection", () => {
+  const facts = computeFactsDelta({ latestHealth: { score: 90 }, priorHealth: { score: 90 } });
+  assert.equal("visitsThisPeriod" in facts, false);
+  assert.equal("visitsPercentChange" in facts, false);
+});
+
+test("computeFactsDelta computes a visits percent change when traffic data is present", () => {
+  const facts = computeFactsDelta({ latestHealth: { score: 90 }, priorHealth: { score: 90 }, visitsThisPeriod: 60, visitsPriorPeriod: 100 });
+  assert.equal(facts.visitsThisPeriod, 60);
+  assert.equal(facts.visitsPriorPeriod, 100);
+  assert.equal(facts.visitsDelta, -40);
+  assert.equal(facts.visitsPercentChange, -40);
+});
+
+test("shouldGenerateInsight triggers on a large traffic drop with enough sample size", () => {
+  const facts = computeFactsDelta({ latestHealth: { score: 90 }, priorHealth: { score: 90 }, leadsThisPeriod: 10, leadsPriorPeriod: 10, visitsThisPeriod: 40, visitsPriorPeriod: 100 });
+  assert.deepEqual(shouldGenerateInsight(facts), { trigger: true, reason: "visits_change" });
+});
+
+test("shouldGenerateInsight ignores a traffic swing on a very low-traffic site", () => {
+  const facts = computeFactsDelta({ latestHealth: { score: 90 }, priorHealth: { score: 90 }, leadsThisPeriod: 10, leadsPriorPeriod: 10, visitsThisPeriod: 2, visitsPriorPeriod: 8 });
+  assert.equal(shouldGenerateInsight(facts).trigger, false);
+});
+
 function insightPayload(overrides = {}) {
   return {
     type: "leads",

@@ -1,5 +1,6 @@
 import { PLAN_LIMITS, dayKey, validatePlan } from "./platform-core.js";
 import { requestOpenAiInsight } from "./platform-openai.js";
+import { decryptYandexToken, encryptYandexToken, fetchYandexVisitStats, refreshYandexToken } from "./platform-yandex.js";
 
 // AI Analyst: turns facts SiteCare already collects (health-score trend,
 // leads volume, open incidents, confirmed site changes) into one short,
@@ -10,7 +11,9 @@ import { requestOpenAiInsight } from "./platform-openai.js";
 const DEFAULT_THRESHOLDS = Object.freeze({
   scoreDelta: 5,
   leadsPercentChange: 20,
-  minLeadsForPercent: 3
+  minLeadsForPercent: 3,
+  visitsPercentChange: 25,
+  minVisitsForPercent: 20
 });
 
 export function computeFactsDelta({
@@ -19,7 +22,9 @@ export function computeFactsDelta({
   leadsThisPeriod = 0,
   leadsPriorPeriod = 0,
   openIncidents = 0,
-  recentChanges = []
+  recentChanges = [],
+  visitsThisPeriod = null,
+  visitsPriorPeriod = null
 } = {}) {
   const score = latestHealth ? Number(latestHealth.score) : null;
   const scoreDelta = latestHealth && priorHealth ? Number(latestHealth.score) - Number(priorHealth.score) : 0;
@@ -27,7 +32,7 @@ export function computeFactsDelta({
   const priorPeriod = Number(leadsPriorPeriod) || 0;
   const leadsDelta = thisPeriod - priorPeriod;
   const leadsPercentChange = priorPeriod > 0 ? Math.round((leadsDelta / priorPeriod) * 100) : (thisPeriod > 0 ? 100 : 0);
-  return {
+  const facts = {
     score,
     scoreDelta,
     high: latestHealth ? Number(latestHealth.high || 0) : 0,
@@ -45,6 +50,20 @@ export function computeFactsDelta({
       createdAt: String(change?.created_at || "")
     }))
   };
+  // Traffic fields are omitted entirely (not left at 0) when the site has no
+  // Yandex Metrica connection, so the AI Analyst prompt's own rule ("rely
+  // only on SITE_FACTS") keeps it from ever guessing at traffic it was
+  // never actually given.
+  if (visitsThisPeriod !== null && visitsPriorPeriod !== null) {
+    const visitsThis = Number(visitsThisPeriod) || 0;
+    const visitsPrior = Number(visitsPriorPeriod) || 0;
+    const visitsDelta = visitsThis - visitsPrior;
+    facts.visitsThisPeriod = visitsThis;
+    facts.visitsPriorPeriod = visitsPrior;
+    facts.visitsDelta = visitsDelta;
+    facts.visitsPercentChange = visitsPrior > 0 ? Math.round((visitsDelta / visitsPrior) * 100) : (visitsThis > 0 ? 100 : 0);
+  }
+  return facts;
 }
 
 export function shouldGenerateInsight(facts, thresholds = DEFAULT_THRESHOLDS) {
@@ -53,6 +72,10 @@ export function shouldGenerateInsight(facts, thresholds = DEFAULT_THRESHOLDS) {
   if (Math.abs(facts.scoreDelta) >= thresholds.scoreDelta) return { trigger: true, reason: "score_delta" };
   const enoughLeadsData = facts.leadsThisPeriod >= thresholds.minLeadsForPercent || facts.leadsPriorPeriod >= thresholds.minLeadsForPercent;
   if (enoughLeadsData && Math.abs(facts.leadsPercentChange) >= thresholds.leadsPercentChange) return { trigger: true, reason: "leads_change" };
+  if (facts.visitsPercentChange !== undefined) {
+    const enoughVisitsData = facts.visitsThisPeriod >= thresholds.minVisitsForPercent || facts.visitsPriorPeriod >= thresholds.minVisitsForPercent;
+    if (enoughVisitsData && Math.abs(facts.visitsPercentChange) >= thresholds.visitsPercentChange) return { trigger: true, reason: "visits_change" };
+  }
   return { trigger: false, reason: "no_significant_change" };
 }
 
@@ -88,11 +111,52 @@ async function resolveStaleInsights(env, siteId, facts) {
   ).bind(siteId, ...types).run();
 }
 
+async function fetchTrafficFacts(env, siteId, weekAgoDate, twoWeeksAgoDate, todayDate, fetchImpl) {
+  try {
+    const connection = await env.GATEWAY_DB.prepare(
+      "SELECT counter_id, access_token_ciphertext, access_token_iv, refresh_token_ciphertext, refresh_token_iv, token_expires_at FROM yandex_metrica_connections WHERE site_id = ?"
+    ).bind(siteId).first();
+    if (!connection) return null;
+    let accessToken = await decryptYandexToken(env, connection.access_token_ciphertext, connection.access_token_iv);
+    if (!accessToken) return null;
+    const expiresAt = connection.token_expires_at ? Date.parse(connection.token_expires_at) : null;
+    if (expiresAt && expiresAt < Date.now() && connection.refresh_token_ciphertext) {
+      const refreshToken = await decryptYandexToken(env, connection.refresh_token_ciphertext, connection.refresh_token_iv);
+      const refreshed = refreshToken ? await refreshYandexToken({
+        clientId: env.YANDEX_OAUTH_CLIENT_ID,
+        clientSecret: env.YANDEX_OAUTH_CLIENT_SECRET,
+        refreshToken,
+        fetchImpl
+      }).catch(() => null) : null;
+      if (refreshed) {
+        accessToken = refreshed.accessToken;
+        const accessEnc = await encryptYandexToken(env, refreshed.accessToken);
+        const refreshEnc = refreshed.refreshToken ? await encryptYandexToken(env, refreshed.refreshToken) : null;
+        await env.GATEWAY_DB.prepare(
+          "UPDATE yandex_metrica_connections SET access_token_ciphertext = ?, access_token_iv = ?, refresh_token_ciphertext = COALESCE(?, refresh_token_ciphertext), refresh_token_iv = COALESCE(?, refresh_token_iv), token_expires_at = ?, updated_at = ? WHERE site_id = ?"
+        ).bind(accessEnc.ciphertext, accessEnc.iv, refreshEnc?.ciphertext || null, refreshEnc?.iv || null, refreshed.expiresAt, new Date().toISOString(), siteId).run();
+      }
+    }
+    const priorEndDate = new Date(Date.parse(weekAgoDate) - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const [thisPeriod, priorPeriod] = await Promise.all([
+      fetchYandexVisitStats({ accessToken, counterId: connection.counter_id, dateFrom: weekAgoDate, dateTo: todayDate, fetchImpl }),
+      fetchYandexVisitStats({ accessToken, counterId: connection.counter_id, dateFrom: twoWeeksAgoDate, dateTo: priorEndDate, fetchImpl })
+    ]);
+    return { visitsThisPeriod: thisPeriod.visits, visitsPriorPeriod: priorPeriod.visits };
+  } catch {
+    // A revoked token, an unreachable Metrika API or an unexpected response
+    // shape must never break insight generation - traffic is a bonus fact,
+    // not a requirement.
+    return null;
+  }
+}
+
 export async function generateSiteInsight(env, site, { fetchImpl = fetch, force = false } = {}) {
   const siteId = site.site_id;
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const trafficPromise = fetchTrafficFacts(env, siteId, weekAgo.slice(0, 10), twoWeeksAgo.slice(0, 10), now.toISOString().slice(0, 10), fetchImpl);
   const [latestHealth, priorHealth, thisWeek, priorWeek, incidentsRow, changesResult] = await Promise.all([
     env.GATEWAY_DB.prepare(
       "SELECT score, high, medium, low, issue_count, checked_at FROM platform_health_history WHERE site_id = ? ORDER BY checked_at DESC LIMIT 1"
@@ -109,13 +173,16 @@ export async function generateSiteInsight(env, site, { fetchImpl = fetch, force 
       "SELECT summary, target_label, kind, created_at FROM platform_change_records WHERE site_id = ? AND status = 'confirmed' AND created_at >= ? ORDER BY created_at DESC LIMIT 5"
     ).bind(siteId, weekAgo).all()
   ]);
+  const traffic = await trafficPromise;
   const facts = computeFactsDelta({
     latestHealth,
     priorHealth,
     leadsThisPeriod: thisWeek?.count || 0,
     leadsPriorPeriod: priorWeek?.count || 0,
     openIncidents: incidentsRow?.count || 0,
-    recentChanges: changesResult?.results || []
+    recentChanges: changesResult?.results || [],
+    visitsThisPeriod: traffic?.visitsThisPeriod ?? null,
+    visitsPriorPeriod: traffic?.visitsPriorPeriod ?? null
   });
 
   await resolveStaleInsights(env, siteId, facts);
