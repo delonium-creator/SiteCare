@@ -69,6 +69,14 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /count-3/u);
   assert.match(html, /id="formRequiredToggleV65"/u);
   assert.match(html, /Выключите для лендингов без формы обратной связи/u);
+  assert.match(html, /data-action="yandex-metrica-dialog"/u);
+  assert.match(html, /function yandexMetricaDialog/u);
+  assert.match(html, /data-action="yandex-metrica-connect"/u);
+  assert.match(html, /data-action="yandex-metrica-disconnect"/u);
+  assert.match(html, /yandex-metrica\/connect/u);
+  assert.match(html, /yandex-metrica\/disconnect/u);
+  assert.match(html, /yandex-metrica\/status/u);
+  assert.match(html, /function reportYandexMetricaCallback/u);
   assert.match(html, /id="leadNotifyForm"/u);
   assert.match(html, /id="notifyLeadsTelegram"/u);
   assert.match(html, /id="notifyLeadsEmail"/u);

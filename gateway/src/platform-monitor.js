@@ -488,6 +488,7 @@ export function extractEditableInventory(html, pageUrl, observation = {}) {
     formCount: formAnalysis.formCount,
     readyFormCount: formAnalysis.readyCount,
     legacyCodeDetected: /t123[^<]{0,80}(?:sitecare|loader)|sitecare[^<]{0,80}t123/iu.test(source),
+    metrikaCounterId: detectYandexMetrikaCounter(source),
     diagnostics
   };
 }
@@ -645,6 +646,7 @@ export async function scanSiteInventory(site, fetchImpl = fetch, { maxPages = 40
     phones: [...new Map(precisePhones.map((item) => [item.originalDigits, item.phone])).values()].slice(0, 50),
     schedules: [...new Set(pages.flatMap((item) => item.schedules))].slice(0, 30),
     legacyCodeDetected: pages.some((item) => item.legacyCodeDetected),
+    metrikaCounterId: pages.map((item) => item.metrikaCounterId).find(Boolean) || null,
     truncated: queue.length > 0,
     errors,
     diagnostics: {
@@ -670,6 +672,15 @@ export async function scanSiteInventory(site, fetchImpl = fetch, { maxPages = 40
       methodology: "Автоматическая проверка опубликованного HTML и ответа сервера. Она не заменяет ручной аудит аналитики, контента, юзабилити и защищённости серверной инфраструктуры."
     }
   };
+}
+
+export function detectYandexMetrikaCounter(html) {
+  const source = String(html || "");
+  const initMatch = /\bym\(\s*(\d{5,10})\s*,\s*["']init["']/u.exec(source);
+  if (initMatch) return initMatch[1];
+  const watchMatch = /mc\.yandex\.ru\/watch\/(\d{5,10})/u.exec(source);
+  if (watchMatch) return watchMatch[1];
+  return null;
 }
 
 export function sitecareLoaderPresent(html, site) {
@@ -701,6 +712,7 @@ export async function inspectSite(site, fetchImpl = fetch) {
         formCount: 0,
         forms: [],
         loaderOk: site?.loader_key ? false : null,
+        metrikaCounterId: null,
         details: safeText(page.error || "Страница недоступна.")
       };
     }
@@ -725,6 +737,7 @@ export async function inspectSite(site, fetchImpl = fetch) {
       formCount: discoveredFormCount,
       forms: analysis.forms,
       loaderOk: sitecareLoaderPresent(page.html, site),
+      metrikaCounterId: detectYandexMetrikaCounter(page.html),
       details: formOk
         ? discoveredFormCount > 0 ? `Найдено форм: ${discoveredFormCount}. Структура готова.` : "Сайт открывается. Формы не обнаружены."
         : `Ожидалось форм: ${Math.max(1, expected)}, исправных: ${analysis.readyCount}.`
@@ -740,6 +753,7 @@ export async function inspectSite(site, fetchImpl = fetch) {
       formCount: 0,
       forms: [],
       loaderOk: site?.loader_key ? false : null,
+      metrikaCounterId: null,
       details: safeText(error instanceof Error ? error.message : "Страница недоступна.")
     };
   }
@@ -865,7 +879,7 @@ export async function checkPlatformSite(env, site, { notify = true, fetchImpl = 
 
   await env.GATEWAY_DB.batch([
     env.GATEWAY_DB.prepare(
-      "UPDATE platform_sites SET last_monitor_at = ?, next_monitor_at = ?, domain_ok = ?, tls_ok = ?, page_ok = ?, form_ok = ?, loader_ok = ?, loader_checked_at = ?, last_http_status = ?, last_latency_ms = ?, last_error = ?, updated_at = ? WHERE site_id = ?"
+      "UPDATE platform_sites SET last_monitor_at = ?, next_monitor_at = ?, domain_ok = ?, tls_ok = ?, page_ok = ?, form_ok = ?, loader_ok = ?, loader_checked_at = ?, last_http_status = ?, last_latency_ms = ?, last_error = ?, metrika_counter_id = COALESCE(metrika_counter_id, ?), updated_at = ? WHERE site_id = ?"
     ).bind(
       checkedAt,
       nextCheckAt(site.monitor_interval_minutes),
@@ -878,6 +892,7 @@ export async function checkPlatformSite(env, site, { notify = true, fetchImpl = 
       result.httpStatus,
       result.latencyMs,
       result.pageOk && result.formOk ? null : result.details,
+      result.metrikaCounterId || null,
       checkedAt,
       site.site_id
     ),

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildContentFields, buildDigestSummary, categorySeverityCounts, checkDomainExpiry, computeHealthScore, diagnosePage, extractEditableInventory, scanSiteInventory } from "../gateway/src/platform-monitor.js";
+import { buildContentFields, buildDigestSummary, categorySeverityCounts, checkDomainExpiry, computeHealthScore, detectYandexMetrikaCounter, diagnosePage, extractEditableInventory, scanSiteInventory } from "../gateway/src/platform-monitor.js";
 
 test("diagnostics report observable SEO, accessibility and mixed-content facts", () => {
   const html = `<!doctype html><html><head><title>Коротко</title><meta name="robots" content="noindex"><link rel="canonical" href="https://example.com/"></head><body><h1>Первый</h1><h1>Второй</h1><img src="https://example.com/photo.jpg"><script src="http://old.example.com/widget.js"></script></body></html>`;
@@ -13,6 +13,13 @@ test("diagnostics report observable SEO, accessibility and mixed-content facts",
   assert.ok(ids.some((id) => id.startsWith("latency:")));
   assert.equal(result.facts.h1Count, 2);
   assert.equal(result.facts.noindex, true);
+});
+
+test("detects a Yandex Metrika counter from the standard init call or the noscript fallback", () => {
+  assert.equal(detectYandexMetrikaCounter(`<script>(function(m,e,t,r,i,k,a){})(window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym"); ym(12345678, "init", {clickmap:true});</script>`), "12345678");
+  assert.equal(detectYandexMetrikaCounter(`<noscript><div><img src="https://mc.yandex.ru/watch/87654321" style="position:absolute; left:-9999px;" alt=""></div></noscript>`), "87654321");
+  assert.equal(detectYandexMetrikaCounter(`<html><body>No analytics here</body></html>`), null);
+  assert.equal(detectYandexMetrikaCounter(""), null);
 });
 
 test("a plain visible phone next to an email is recognized without technical ids", () => {
@@ -37,6 +44,18 @@ test("whole-site scan aggregates duplicate metadata and failed internal pages", 
   const { categoryScores } = result.diagnostics.summary;
   assert.deepEqual(Object.keys(categoryScores).sort(), ["accessibility", "content", "legal", "mobile", "performance", "security", "seo", "social"]);
   for (const score of Object.values(categoryScores)) assert.ok(score >= 0 && score <= 100);
+});
+
+test("whole-site scan surfaces a Yandex Metrika counter found on any crawled page", async () => {
+  const pages = new Map([
+    ["https://example.com/", `<!doctype html><html lang="ru"><head><title>Главная</title></head><body><a href="/about">О нас</a></body></html>`],
+    ["https://example.com/about", `<!doctype html><html lang="ru"><head><title>О нас</title></head><body><script>ym(555444, "init", {});</script></body></html>`]
+  ]);
+  const fetchImpl = async (url) => pages.has(url)
+    ? new Response(pages.get(url), { status: 200, headers: { "Content-Type": "text/html" } })
+    : new Response("not found", { status: 404, headers: { "Content-Type": "text/html" } });
+  const result = await scanSiteInventory({ target_url: "https://example.com/", scope: "site" }, fetchImpl, { maxPages: 10 });
+  assert.equal(result.metrikaCounterId, "555444");
 });
 
 test("a clean site scores 100 and each severity pulls the score down without going negative", () => {

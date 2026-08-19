@@ -69,6 +69,13 @@ import {
   updateSupportRequest
 } from "./platform-support.js";
 import { inviteHtml, platformHtml, resetPasswordHtml } from "./platform-ui.js";
+import {
+  buildYandexAuthorizeUrl,
+  decryptYandexToken,
+  encryptYandexToken,
+  exchangeYandexCode,
+  fetchYandexCounters
+} from "./platform-yandex.js";
 
 const encoder = new TextEncoder();
 const MAX_JSON_BODY_BYTES = 32 * 1024;
@@ -933,6 +940,7 @@ async function addSite(request, env, user, accountId) {
   const discoveredForms = Math.max(Number(preliminary.formCount || 0), Number(inventoryPreview.formCount || 0));
   const formRequired = preliminary.pageOk && discoveredForms > 0 ? 1 : 0;
   const expectedForms = formRequired ? Math.min(20, discoveredForms) : 0;
+  const metrikaCounterId = preliminary.metrikaCounterId || inventoryPreview.metrikaCounterId || null;
   const webhookToken = randomToken(32);
   const webhookHash = await digest("platform-form-webhook", webhookToken);
   const loaderKey = randomToken(24);
@@ -943,8 +951,8 @@ async function addSite(request, env, user, accountId) {
       "INSERT INTO gateway_sites (site_id, site_name, target_url, site_token_hash, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)"
     ).bind(siteId, name, targetUrl, siteTokenHash, now, now),
     env.GATEWAY_DB.prepare(
-      "INSERT INTO platform_sites (site_id, account_id, name, target_url, target_origin, target_pathname, scope, status, integration_mode, form_required, expected_form_count, webhook_token_hash, loader_key, monitor_interval_minutes, last_monitor_at, next_monitor_at, domain_ok, tls_ok, page_ok, form_ok, last_http_status, last_latency_ms, last_error, last_form_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'central', ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)"
-    ).bind(siteId, accountId, name, targetUrl, target.origin, target.pathname, scope, formRequired, expectedForms, webhookHash, loaderKey, limits.monitorMinutes, now, now, now),
+      "INSERT INTO platform_sites (site_id, account_id, name, target_url, target_origin, target_pathname, scope, status, integration_mode, form_required, expected_form_count, webhook_token_hash, loader_key, monitor_interval_minutes, last_monitor_at, next_monitor_at, domain_ok, tls_ok, page_ok, form_ok, last_http_status, last_latency_ms, last_error, last_form_at, metrika_counter_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'central', ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)"
+    ).bind(siteId, accountId, name, targetUrl, target.origin, target.pathname, scope, formRequired, expectedForms, webhookHash, loaderKey, limits.monitorMinutes, now, metrikaCounterId, now, now),
     env.GATEWAY_DB.prepare(
       "INSERT INTO platform_site_overrides (site_id, enabled, phone, schedule_text, button_text, button_url, version, updated_at) VALUES (?, 0, '', '', '', '', 1, ?)"
     ).bind(siteId, now),
@@ -2632,6 +2640,109 @@ async function telegramDisconnect(env, user, siteId) {
   return json({ ok: true });
 }
 
+async function yandexMetricaStatus(env, user, siteId) {
+  const { site } = await siteAccess(env, user, siteId, "viewer");
+  const connection = await env.GATEWAY_DB.prepare(
+    "SELECT counter_id, connected_at, yandex_login FROM yandex_metrica_connections WHERE site_id = ?"
+  ).bind(siteId).first();
+  return json({
+    ok: true,
+    connected: Boolean(connection),
+    counterId: connection?.counter_id || site.metrika_counter_id || null,
+    connectedAt: connection?.connected_at || null,
+    yandexLogin: connection?.yandex_login || null,
+    detectedCounterId: site.metrika_counter_id || null,
+    configured: Boolean(env.YANDEX_OAUTH_CLIENT_ID)
+  });
+}
+
+async function yandexMetricaConnect(request, env, user, siteId) {
+  const { site } = await siteAccess(env, user, siteId, "manager");
+  if (!env.YANDEX_OAUTH_CLIENT_ID) fail("Подключение Яндекс Метрики ещё не настроено.", 503, "YANDEX_NOT_CONFIGURED");
+  const state = randomToken(24);
+  const stateHash = await digest("yandex-metrica-oauth-state", state);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+  await env.GATEWAY_DB.batch([
+    env.GATEWAY_DB.prepare("DELETE FROM yandex_metrica_connect_sessions WHERE site_id = ? AND used_at IS NULL").bind(siteId),
+    env.GATEWAY_DB.prepare("INSERT INTO yandex_metrica_connect_sessions (state_hash, site_id, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, NULL)")
+      .bind(stateHash, siteId, now.toISOString(), expiresAt)
+  ]);
+  const redirectUri = `${new URL(request.url).origin}/v1/platform/yandex/callback`;
+  const authorizeUrl = buildYandexAuthorizeUrl({ clientId: env.YANDEX_OAUTH_CLIENT_ID, state, redirectUri });
+  await audit(env, user, site.account_id, "yandex_metrica.connect.start", "site", siteId);
+  return json({ ok: true, authorizeUrl, expiresAt, expiresInMinutes: 15 });
+}
+
+async function yandexMetricaCallback(request, env) {
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code") || "";
+  const state = url.searchParams.get("state") || "";
+  const oauthError = url.searchParams.get("error") || "";
+  const redirectTo = (status, reason = "") => Response.redirect(`${url.origin}/app?yandexMetrica=${status}${reason ? `&reason=${encodeURIComponent(reason)}` : ""}`, 302);
+  if (oauthError || !code || !state) return redirectTo("error", oauthError || "missing_params");
+
+  const stateHash = await digest("yandex-metrica-oauth-state", state);
+  const now = new Date().toISOString();
+  const session = await env.GATEWAY_DB.prepare(
+    "SELECT site_id, expires_at, used_at FROM yandex_metrica_connect_sessions WHERE state_hash = ?"
+  ).bind(stateHash).first();
+  if (!session || session.used_at || session.expires_at <= now) return redirectTo("error", "session_expired");
+
+  let tokens;
+  try {
+    tokens = await exchangeYandexCode({
+      clientId: env.YANDEX_OAUTH_CLIENT_ID,
+      clientSecret: env.YANDEX_OAUTH_CLIENT_SECRET,
+      code,
+      redirectUri: `${url.origin}/v1/platform/yandex/callback`
+    });
+  } catch {
+    return redirectTo("error", "token_exchange_failed");
+  }
+  if (!tokens) return redirectTo("error", "token_exchange_failed");
+
+  const site = await env.GATEWAY_DB.prepare("SELECT site_id, account_id, metrika_counter_id FROM platform_sites WHERE site_id = ?").bind(session.site_id).first();
+  if (!site) return redirectTo("error", "site_not_found");
+
+  let counterId = site.metrika_counter_id || null;
+  if (!counterId) {
+    try {
+      const counters = await fetchYandexCounters({ accessToken: tokens.accessToken });
+      if (counters.length === 1) counterId = counters[0].id;
+    } catch {
+      // The OAuth exchange already succeeded here - only the counter lookup
+      // failed. Fall through to the "no counter" error below rather than a
+      // generic one, since that is the more actionable message for the user.
+    }
+  }
+  if (!counterId) return redirectTo("error", "counter_not_found");
+
+  const accessTokenEnc = await encryptYandexToken(env, tokens.accessToken);
+  const refreshTokenEnc = tokens.refreshToken ? await encryptYandexToken(env, tokens.refreshToken) : null;
+  const nowIso = new Date().toISOString();
+  await env.GATEWAY_DB.batch([
+    env.GATEWAY_DB.prepare(
+      "INSERT INTO yandex_metrica_connections (site_id, counter_id, access_token_ciphertext, access_token_iv, refresh_token_ciphertext, refresh_token_iv, token_expires_at, connected_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(site_id) DO UPDATE SET counter_id = excluded.counter_id, access_token_ciphertext = excluded.access_token_ciphertext, access_token_iv = excluded.access_token_iv, refresh_token_ciphertext = excluded.refresh_token_ciphertext, refresh_token_iv = excluded.refresh_token_iv, token_expires_at = excluded.token_expires_at, updated_at = excluded.updated_at"
+    ).bind(session.site_id, counterId, accessTokenEnc.ciphertext, accessTokenEnc.iv, refreshTokenEnc?.ciphertext || null, refreshTokenEnc?.iv || null, tokens.expiresAt, nowIso, nowIso),
+    env.GATEWAY_DB.prepare("UPDATE yandex_metrica_connect_sessions SET used_at = ? WHERE state_hash = ?").bind(nowIso, stateHash),
+    env.GATEWAY_DB.prepare("UPDATE platform_sites SET metrika_counter_id = COALESCE(metrika_counter_id, ?) WHERE site_id = ?").bind(counterId, session.site_id)
+  ]);
+  await audit(env, null, site.account_id, "yandex_metrica.connect.complete", "site", session.site_id);
+  return redirectTo("connected");
+}
+
+async function yandexMetricaDisconnect(env, user, siteId) {
+  const { site } = await siteAccess(env, user, siteId, "admin");
+  await env.GATEWAY_DB.batch([
+    env.GATEWAY_DB.prepare("DELETE FROM yandex_metrica_connections WHERE site_id = ?").bind(siteId),
+    env.GATEWAY_DB.prepare("DELETE FROM yandex_metrica_connect_sessions WHERE site_id = ?").bind(siteId)
+  ]);
+  await audit(env, user, site.account_id, "yandex_metrica.disconnect", "site", siteId);
+  return json({ ok: true });
+}
+
 async function inviteMember(request, env, user, accountId) {
   const account = await accountAccess(env, user, accountId, "admin");
   const body = await requestJson(request);
@@ -2881,6 +2992,7 @@ export async function handlePlatformRoute(request, env, path) {
   if ((request.method === "POST" || request.method === "OPTIONS") && match) return runtimeApplied(request, env, match[1]);
   match = /^\/v1\/public\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/select$/u.exec(path);
   if ((request.method === "POST" || request.method === "OPTIONS") && match) return reportSiteSelection(request, env, match[1]);
+  if (request.method === "GET" && path === "/v1/platform/yandex/callback") return yandexMetricaCallback(request, env);
 
   if (!path.startsWith("/v1/platform/")) return null;
   const csrf = request.method !== "GET" && request.method !== "HEAD";
@@ -2998,6 +3110,12 @@ export async function handlePlatformRoute(request, env, path) {
     if (request.method === "POST" && match[2] === "connect") return telegramConnect(request, env, user, match[1]);
     if (request.method === "POST" && match[2] === "test") return telegramTest(env, user, match[1]);
     if (request.method === "POST" && match[2] === "disconnect") return telegramDisconnect(env, user, match[1]);
+  }
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/yandex-metrica\/(status|connect|disconnect)$/u.exec(path);
+  if (match) {
+    if (request.method === "GET" && match[2] === "status") return yandexMetricaStatus(env, user, match[1]);
+    if (request.method === "POST" && match[2] === "connect") return yandexMetricaConnect(request, env, user, match[1]);
+    if (request.method === "POST" && match[2] === "disconnect") return yandexMetricaDisconnect(env, user, match[1]);
   }
   fail("Страница не найдена.", 404, "NOT_FOUND");
 }
