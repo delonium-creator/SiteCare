@@ -2158,6 +2158,31 @@ async function operatorSupportNote(request, env, user, accountId) {
   return json({ ok: true, createdAt: now });
 }
 
+async function loadSupportNoteForOperator(env, user, noteId) {
+  if (user.platform_role !== "operator") fail("Доступ запрещён.", 403, "FORBIDDEN");
+  const row = await env.GATEWAY_DB.prepare("SELECT * FROM platform_support_notes WHERE id = ?").bind(Number(noteId)).first();
+  if (!row) fail("Заметка не найдена.", 404, "NOT_FOUND");
+  await accountAccess(env, user, row.account_id, "owner");
+  return row;
+}
+
+async function updateSupportNote(request, env, user, noteId) {
+  const row = await loadSupportNoteForOperator(env, user, noteId);
+  const body = await requestJson(request);
+  const note = safeText(body.note, 1000);
+  if (note.length < 2) fail("Введите заметку.");
+  await env.GATEWAY_DB.prepare("UPDATE platform_support_notes SET note = ? WHERE id = ?").bind(note, row.id).run();
+  await audit(env, user, row.account_id, "support.note.update", "account", row.account_id, "Изменена внутренняя заметка.");
+  return json({ ok: true });
+}
+
+async function deleteSupportNote(env, user, noteId) {
+  const row = await loadSupportNoteForOperator(env, user, noteId);
+  await env.GATEWAY_DB.prepare("DELETE FROM platform_support_notes WHERE id = ?").bind(row.id).run();
+  await audit(env, user, row.account_id, "support.note.delete", "account", row.account_id, "Удалена внутренняя заметка.");
+  return json({ ok: true });
+}
+
 async function operatorProducts(request, env, user) {
   if (user.platform_role !== "operator") fail("Доступ запрещён.", 403, "FORBIDDEN");
   const body = await requestJson(request);
@@ -2846,6 +2871,9 @@ export async function handlePlatformRoute(request, env, path) {
   if (request.method === "PATCH" && match) return operatorBilling(request, env, user, match[1]);
   match = /^\/v1\/platform\/operator\/accounts\/(acc_[a-z0-9_-]{4,80})\/notes$/u.exec(path);
   if (request.method === "POST" && match) return operatorSupportNote(request, env, user, match[1]);
+  match = /^\/v1\/platform\/operator\/notes\/(\d+)$/u.exec(path);
+  if (request.method === "PATCH" && match) return updateSupportNote(request, env, user, match[1]);
+  if (request.method === "DELETE" && match) return deleteSupportNote(env, user, match[1]);
   match = /^\/v1\/platform\/operator\/accounts\/(acc_[a-z0-9_-]{4,80})\/activation$/u.exec(path);
   if (request.method === "POST" && match) return operatorActivationLink(request, env, user, match[1]);
   match = /^\/v1\/platform\/operator\/accounts\/(acc_[a-z0-9_-]{4,80})\/users\/(usr_[a-z0-9_-]{4,100})\/(access-link|sessions|status)$/u.exec(path);

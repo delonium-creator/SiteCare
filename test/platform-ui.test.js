@@ -83,6 +83,9 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /Кратко о клиенте/u);
   assert.match(html, /Составить ответ/u);
   assert.match(html, /Черновик не отправляется автоматически/u);
+  assert.match(html, /data-action="edit-note"/u);
+  assert.match(html, /data-action="delete-note"/u);
+  assert.equal((html.match(/<button class="danger" data-action="logout">/gu) || []).length, 2, "logout must be reachable from both client settings and the operator system page");
   assert.match(html, /Проверки и понятные причины — открытые вопросы решает помощник в чате справа/u);
   assert.match(html, /data-feature="reviews"/u);
   assert.match(html, /Посмотреть как клиент/u);
