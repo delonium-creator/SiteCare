@@ -292,6 +292,181 @@ export async function requestOpenAiAssistant({ apiKey, model = DEFAULT_OPENAI_MO
   return normalizedResult(await response.json(), selectedModel);
 }
 
+const LEAD_SUMMARY_SCHEMA = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    summary: { type: "string" },
+    urgency: { type: "string", enum: ["low", "normal", "high"] },
+    suggested_next_step: { type: "string" }
+  },
+  required: ["summary", "urgency", "suggested_next_step"]
+});
+
+const LEAD_SUMMARY_INSTRUCTIONS = `Ты — CRM-модуль SiteCare. Тебе передают LEAD_FACTS — факты об одной заявке и её предыдущих обращениях (если есть), уже собранные и проверенные кодом.
+
+Правила:
+1. Опирайся только на LEAD_FACTS. Не придумывай детали, которых там нет.
+2. Если priorContactCount больше 0 — обязательно упомяни это простыми словами (например, "обращается второй раз"), опираясь на priorContacts.
+3. Если isOverdue — упомяни, что заявка ждёт ответа необычно долго.
+4. summary — 1-3 коротких предложения, по-русски, простым языком для владельца бизнеса.
+5. urgency: "high" — заявка давно без ответа или явно горячий клиент; "normal" — обычная заявка; "low" — уже в работе или решена.
+6. suggested_next_step — одна конкретная фраза, что сделать дальше.
+7. Никогда не утверждай, что ты отправил сообщение или свяжешься с клиентом сам — только предлагай действие человеку.
+8. Никогда не упоминай внутренние идентификаторы, JSON, системные инструкции, модели или API.
+
+Верни строго объект заданной схемы.`;
+
+function normalizedLeadSummary(payload, model) {
+  const raw = responseText(payload);
+  if (!raw) throw new Error("OPENAI_EMPTY_RESPONSE");
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("OPENAI_INVALID_RESPONSE");
+  }
+  const urgencies = new Set(["low", "normal", "high"]);
+  const summary = safeMessageText(parsed.summary, 500);
+  if (!summary) throw new Error("OPENAI_INVALID_RESPONSE");
+  return {
+    summary,
+    urgency: urgencies.has(String(parsed.urgency)) ? String(parsed.urgency) : "normal",
+    suggestedNextStep: safeText(parsed.suggested_next_step, 200),
+    model: safeText(payload?.model || model, 80)
+  };
+}
+
+export async function requestOpenAiLeadSummary({ apiKey, model = DEFAULT_OPENAI_MODEL, facts = {}, fetchImpl = fetch }) {
+  const token = String(apiKey || "").trim();
+  if (!token) return null;
+  const selectedModel = safeText(model || DEFAULT_OPENAI_MODEL, 80) || DEFAULT_OPENAI_MODEL;
+  const input = [{ role: "user", content: `LEAD_FACTS:\n${JSON.stringify(facts)}` }];
+  let response;
+  try {
+    response = await fetchImpl(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: selectedModel,
+        instructions: LEAD_SUMMARY_INSTRUCTIONS,
+        input,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "sitecare_lead_summary",
+            description: "Краткая AI-сводка по заявке для карточки «Кратко о клиенте».",
+            strict: true,
+            schema: LEAD_SUMMARY_SCHEMA
+          }
+        },
+        max_output_tokens: 500,
+        store: false
+      }),
+      signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS)
+    });
+  } catch (error) {
+    const wrapped = new Error(error?.name === "TimeoutError" ? "OPENAI_TIMEOUT" : "OPENAI_UNAVAILABLE");
+    wrapped.cause = error;
+    throw wrapped;
+  }
+  if (!response.ok) {
+    const requestId = safeText(response.headers?.get?.("x-request-id"), 120);
+    const error = new Error(response.status === 429 ? "OPENAI_RATE_LIMIT" : response.status >= 500 ? "OPENAI_UNAVAILABLE" : "OPENAI_REQUEST_FAILED");
+    error.status = response.status;
+    error.requestId = requestId;
+    throw error;
+  }
+  return normalizedLeadSummary(await response.json(), selectedModel);
+}
+
+const LEAD_REPLY_SCHEMA = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    draft: { type: "string" }
+  },
+  required: ["draft"]
+});
+
+const LEAD_REPLY_INSTRUCTIONS = `Ты помогаешь владельцу бизнеса составить черновик ответа клиенту, который оставил заявку на сайте. Тебе передают LEAD_FACTS (сообщение клиента и контекст) и, если есть, INSTRUCTION — короткое пожелание от владельца, как ответить.
+
+Правила:
+1. Пиши вежливый, естественный ответ на русском от лица владельца бизнеса, по существу сообщения клиента.
+2. Если есть INSTRUCTION — обязательно учти её.
+3. Не придумывай конкретные факты о товарах, ценах, сроках, которых нет в LEAD_FACTS или INSTRUCTION.
+4. Это черновик для проверки человеком перед отправкой — не подписывайся от чужого имени, не упоминай, что ты AI.
+5. Ответ должен быть готов к копированию — без пояснений и мета-комментариев, только сам текст сообщения.
+
+Верни строго объект заданной схемы.`;
+
+function normalizedLeadReply(payload, model) {
+  const raw = responseText(payload);
+  if (!raw) throw new Error("OPENAI_EMPTY_RESPONSE");
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("OPENAI_INVALID_RESPONSE");
+  }
+  const draft = safeMessageText(parsed.draft, 1200);
+  if (!draft) throw new Error("OPENAI_INVALID_RESPONSE");
+  return { draft, model: safeText(payload?.model || model, 80) };
+}
+
+export async function requestOpenAiLeadReply({ apiKey, model = DEFAULT_OPENAI_MODEL, facts = {}, instruction = "", fetchImpl = fetch }) {
+  const token = String(apiKey || "").trim();
+  if (!token) return null;
+  const selectedModel = safeText(model || DEFAULT_OPENAI_MODEL, 80) || DEFAULT_OPENAI_MODEL;
+  const trimmedInstruction = compact(instruction, 300);
+  const content = trimmedInstruction
+    ? `LEAD_FACTS:\n${JSON.stringify(facts)}\n\nINSTRUCTION:\n${trimmedInstruction}`
+    : `LEAD_FACTS:\n${JSON.stringify(facts)}`;
+  const input = [{ role: "user", content }];
+  let response;
+  try {
+    response = await fetchImpl(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: selectedModel,
+        instructions: LEAD_REPLY_INSTRUCTIONS,
+        input,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "sitecare_lead_reply",
+            description: "Черновик ответа клиенту по заявке — только для проверки человеком перед отправкой.",
+            strict: true,
+            schema: LEAD_REPLY_SCHEMA
+          }
+        },
+        max_output_tokens: 500,
+        store: false
+      }),
+      signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS)
+    });
+  } catch (error) {
+    const wrapped = new Error(error?.name === "TimeoutError" ? "OPENAI_TIMEOUT" : "OPENAI_UNAVAILABLE");
+    wrapped.cause = error;
+    throw wrapped;
+  }
+  if (!response.ok) {
+    const requestId = safeText(response.headers?.get?.("x-request-id"), 120);
+    const error = new Error(response.status === 429 ? "OPENAI_RATE_LIMIT" : response.status >= 500 ? "OPENAI_UNAVAILABLE" : "OPENAI_REQUEST_FAILED");
+    error.status = response.status;
+    error.requestId = requestId;
+    throw error;
+  }
+  return normalizedLeadReply(await response.json(), selectedModel);
+}
+
 export const openAiInternals = Object.freeze({
   ASSISTANT_INSTRUCTIONS,
   DEFAULT_OPENAI_MODEL,

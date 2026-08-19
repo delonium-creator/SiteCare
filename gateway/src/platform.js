@@ -52,6 +52,7 @@ import {
 import { checkPlatformSite, inspectSite, runDuePlatformChecks, runDueHealthScans, runDueDigests, runDueContentAudits, runDueDomainChecks, runDueMonitorRollups, recordHealthCheck, scanSiteInventory, siteReport } from "./platform-monitor.js";
 import { prepareSiteChange, phoneValueQuestion } from "./platform-assistant.js";
 import { generateSiteInsight } from "./platform-insights.js";
+import { generateLeadReplyDraft, generateLeadSummary } from "./platform-crm.js";
 import { encryptProtectedJson, leadRowToPublic, normalizeLeadSubmission } from "./platform-leads.js";
 import {
   appendConversationMessage,
@@ -2644,6 +2645,61 @@ async function updateLead(request, env, user, leadId) {
   return json({ ok: true, lead: await leadRowToPublic(env, updated) });
 }
 
+async function loadLeadForAi(env, user, leadId) {
+  if (!/^lead_[a-z0-9_-]{4,100}$/u.test(String(leadId || ""))) fail("Некорректная заявка.");
+  const row = await env.GATEWAY_DB.prepare("SELECT * FROM platform_leads WHERE lead_id = ?").bind(leadId).first();
+  if (!row) fail("Заявка не найдена.", 404, "NOT_FOUND");
+  await siteAccess(env, user, row.site_id, "manager");
+  const lead = await leadRowToPublic(env, row);
+  return { row, lead };
+}
+
+async function relatedLeadsFor(env, siteId, excludeLeadId) {
+  const rows = await env.GATEWAY_DB.prepare(
+    "SELECT * FROM platform_leads WHERE site_id = ? AND lead_id != ? ORDER BY received_at DESC LIMIT 50"
+  ).bind(siteId, excludeLeadId).all();
+  return Promise.all((rows?.results || []).map((row) => leadRowToPublic(env, row)));
+}
+
+async function withinDailyAiBudget(env, accountId) {
+  const today = dayKey();
+  const [accountRow, usage] = await Promise.all([
+    env.GATEWAY_DB.prepare("SELECT plan FROM platform_accounts WHERE account_id = ?").bind(accountId).first(),
+    env.GATEWAY_DB.prepare("SELECT ai_requests FROM platform_usage_daily WHERE account_id = ? AND usage_day = ?").bind(accountId, today).first()
+  ]);
+  const limit = PLAN_LIMITS[validatePlan(accountRow?.plan)].aiPerDay;
+  return Number(usage?.ai_requests || 0) < limit;
+}
+
+async function recordAiUsage(env, accountId) {
+  await env.GATEWAY_DB.prepare(
+    "INSERT INTO platform_usage_daily (account_id, usage_day, monitor_checks, form_signals, ai_requests) VALUES (?, ?, 0, 0, 1) " +
+    "ON CONFLICT(account_id, usage_day) DO UPDATE SET ai_requests = ai_requests + 1"
+  ).bind(accountId, dayKey()).run();
+}
+
+async function leadSummary(request, env, user, leadId) {
+  const { row, lead } = await loadLeadForAi(env, user, leadId);
+  await enforceActionLimit(env, `lead-ai:${user.user_id}:${row.site_id}`, 20, 300);
+  if (!(await withinDailyAiBudget(env, row.account_id))) fail("Дневной лимит AI-запросов исчерпан.", 429, "AI_BUDGET_EXCEEDED");
+  const relatedLeads = await relatedLeadsFor(env, row.site_id, leadId);
+  const result = await generateLeadSummary(env, lead, relatedLeads, { fetchImpl: fetch });
+  if (!result) fail("AI-помощник сейчас недоступен. Попробуйте ещё раз позже.", 503, "AI_UNAVAILABLE");
+  await recordAiUsage(env, row.account_id);
+  return json({ ok: true, ...result });
+}
+
+async function leadDraftReply(request, env, user, leadId) {
+  const { row, lead } = await loadLeadForAi(env, user, leadId);
+  await enforceActionLimit(env, `lead-ai:${user.user_id}:${row.site_id}`, 20, 300);
+  if (!(await withinDailyAiBudget(env, row.account_id))) fail("Дневной лимит AI-запросов исчерпан.", 429, "AI_BUDGET_EXCEEDED");
+  const body = await requestJson(request);
+  const result = await generateLeadReplyDraft(env, lead, safeText(body.instruction, 300), { fetchImpl: fetch });
+  if (!result) fail("AI-помощник сейчас недоступен. Попробуйте ещё раз позже.", 503, "AI_UNAVAILABLE");
+  await recordAiUsage(env, row.account_id);
+  return json({ ok: true, ...result });
+}
+
 async function operatorAccountUser(env, user, accountId, userId) {
   if (user.platform_role !== "operator") fail("Доступ запрещён.", 403, "FORBIDDEN");
   await accountAccess(env, user, accountId, "owner");
@@ -2812,6 +2868,9 @@ export async function handlePlatformRoute(request, env, path) {
   if (request.method === "POST" && match) return billingCheckout(request, env, user, match[1]);
   match = /^\/v1\/platform\/leads\/(lead_[a-z0-9_-]{4,100})$/u.exec(path);
   if (request.method === "PATCH" && match) return updateLead(request, env, user, match[1]);
+  match = /^\/v1\/platform\/leads\/(lead_[a-z0-9_-]{4,100})\/(summary|draft-reply)$/u.exec(path);
+  if (request.method === "POST" && match && match[2] === "summary") return leadSummary(request, env, user, match[1]);
+  if (request.method === "POST" && match && match[2] === "draft-reply") return leadDraftReply(request, env, user, match[1]);
 
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})$/u.exec(path);
   if (request.method === "PATCH" && match) return updateSite(request, env, user, match[1]);
