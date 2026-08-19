@@ -64,6 +64,11 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /Контроль сайта/u);
   assert.match(html, /compact-status\.problem/u);
   assert.match(html, /data-action="telegram-dialog"/u);
+  assert.match(html, /function leadsEnabled\(s\)/u);
+  assert.match(html, /id="navLeadsButton"/u);
+  assert.match(html, /count-3/u);
+  assert.match(html, /id="formRequiredToggleV65"/u);
+  assert.match(html, /Выключите для лендингов без формы обратной связи/u);
   assert.match(html, /id="leadNotifyForm"/u);
   assert.match(html, /id="notifyLeadsTelegram"/u);
   assert.match(html, /id="notifyLeadsEmail"/u);
