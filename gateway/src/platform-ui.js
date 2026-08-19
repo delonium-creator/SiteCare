@@ -110,28 +110,32 @@ export function platformHtml(nonce) {
     .stat-sparkline{position:absolute;right:14px;bottom:12px;width:64px;height:26px;opacity:.3;pointer-events:none}.stat-tile.purple .stat-sparkline{color:var(--brand)}.stat-tile.red .stat-sparkline{color:var(--red)}.stat-tile.amber .stat-sparkline{color:var(--amber)}.stat-tile.blue .stat-sparkline{color:#2f6fe0}
     .gauge-list{display:grid;gap:14px;margin-top:6px}.gauge-row{display:grid;grid-template-columns:20px 150px minmax(0,1fr) 44px;align-items:center;gap:10px;width:100%;border:0;background:transparent;padding:6px 8px;margin:0 -8px;border-radius:10px;cursor:pointer;text-align:left;transition:background .15s ease}.gauge-icon{width:17px;height:17px;color:#8a7fd6}.gauge-row:hover{background:#f6f5fb}.gauge-more{max-height:0;overflow:hidden;transition:max-height .3s ease}.gauge-more.expanded{max-height:420px}.gauge-more .gauge-list{padding-top:10px}.gauge-more-toggle{display:inline-flex;align-items:center;gap:4px;margin-top:14px;padding:4px 2px;border:0;background:transparent;color:var(--brand);font-size:14px;font-weight:750}.gauge-more-toggle:hover{color:#5140c9}.gauge-chevron{width:15px;height:15px;transition:transform .25s ease}.gauge-more-toggle.expanded .gauge-chevron{transform:rotate(90deg)}.gauge-label{color:#454b5b;font-size:13px;font-weight:700}.gauge-bar{height:8px;border-radius:999px;background:#eef0f5;overflow:hidden}.gauge-fill{height:100%;border-radius:999px;background:var(--green)}.gauge-fill.warn{background:var(--amber)}.gauge-fill.bad{background:var(--red)}.gauge-value{text-align:right;color:#454b5b;font-size:13px;font-weight:800}
     .home-cta{grid-template-columns:1fr;gap:14px;background:radial-gradient(circle at 90% 0,rgba(124,97,236,.14),transparent 40%),linear-gradient(150deg,#faf9ff 0%,#f3f1ff 100%)}.home-cta>div:nth-child(2){display:grid;gap:4px}.home-cta .run-diagnostics{grid-column:1/-1;width:100%;margin:0;box-shadow:0 10px 24px rgba(101,80,230,.32)}
-    /* 8.2: Главная concept v2 - status banner, quick overview, timeline, leads-today */
-    .banner.home-status i{width:25px;height:25px;display:grid;place-items:center;border-radius:50%;background:#8a8fa0;color:#fff;font-style:normal;flex:0 0 auto}.banner.home-status.green i{background:var(--green)}.banner.home-status.amber i{background:var(--amber)}.banner.home-status.red i{background:var(--red)}
+    /* 8.2: Главная concept v2 - quick overview, timeline, leads-today */
     .quick-row{display:grid;grid-template-columns:1.7fr 1fr 1fr 1fr;gap:14px;margin-top:14px}
-    .quick-overview-card h2{margin:0 0 14px;font-size:16px}
-    .quick-statuses{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-    .quick-status{display:flex;align-items:center;gap:10px;padding:0;border:0;background:transparent;text-align:left}
-    .quick-status-icon{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;flex:0 0 auto;background:var(--green);color:#fff}
-    .quick-status-icon svg{width:14px;height:14px}
+    .quick-overview-card{padding:24px}.quick-overview-card h2{margin:0 0 18px;font-size:18px}
+    .quick-statuses{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+    .quick-status{display:flex;align-items:center;gap:12px;padding:0;border:0;background:transparent;text-align:left}
+    .quick-status-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:50%;flex:0 0 auto;background:var(--green);color:#fff}
+    .quick-status-icon svg{width:20px;height:20px}
     .quick-status.bad .quick-status-icon{background:var(--red)}
-    .quick-status>span:last-child{display:grid;gap:2px}
-    .quick-status b{font-size:13px}
-    .quick-status>span:last-child>span{color:var(--muted);font-size:12px}
-    .quick-action-card{display:flex;flex-direction:column;gap:8px;padding:18px;border:1px solid var(--line);border-radius:16px;background:#fff;text-align:left;text-decoration:none;color:inherit;transition:box-shadow .16s ease,border-color .16s ease,transform .16s ease}
+    .quick-status>span:last-child{display:grid;gap:3px}
+    .quick-status b{font-size:15px}
+    .quick-status>span:last-child>span{color:var(--muted);font-size:13px;line-height:1.4}
+    .quick-action-card{display:flex;flex-direction:column;gap:11px;padding:24px;border:1px solid var(--line);border-radius:16px;background:#fff;text-align:left;text-decoration:none;color:inherit;transition:box-shadow .16s ease,border-color .16s ease,transform .16s ease}
     .quick-action-card:hover{border-color:#d7d2f5;box-shadow:0 8px 20px rgba(28,34,53,.06);transform:translateY(-1px)}
-    .quick-action-icon{color:var(--brand)}.quick-action-icon svg{width:22px;height:22px}
-    .quick-action-card b{font-size:14px}
-    .quick-action-desc{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;line-height:1.4}
-    .quick-action-chev{flex:0 0 auto;color:var(--brand);font-size:16px;font-style:normal}
+    .quick-action-icon{color:var(--brand)}.quick-action-icon svg{width:28px;height:28px}
+    .quick-action-card b{font-size:16px}
+    .quick-action-desc{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:13px;line-height:1.45}
+    .quick-action-chev{flex:0 0 auto;color:var(--brand);font-size:19px;font-style:normal}
     @media(max-width:1120px){.quick-row{grid-template-columns:1fr 1fr}}
     @media(max-width:620px){.quick-row{grid-template-columns:1fr}.quick-statuses{grid-template-columns:1fr}}
-    .leads-today{position:relative;overflow:hidden}.leads-today strong{display:block;margin:4px 0 2px;font-size:34px;line-height:1}.leads-today .stat-sparkline{color:var(--brand)}.leads-today .ghost{margin-top:14px}
+    .leads-today strong{display:block;margin:4px 0 2px;font-size:36px;line-height:1}
+    .leads-today-chart{display:block;width:100%;height:70px;margin:16px 0 18px;color:var(--brand)}
+    .leads-today .ghost{margin-top:0;display:flex;align-items:center;justify-content:space-between;gap:8px}
     .lead-dot{display:inline-block;width:8px;height:8px;margin-right:6px;border-radius:50%;background:#c7cad4}.lead-dot.ok{background:var(--green)}.lead-dot.warn{background:var(--amber)}
+    .event{grid-template-columns:42px minmax(0,1fr) auto}.event-icon{width:42px;height:42px;border-radius:50%;background:#eef0f5;color:#6b7180}.event-icon svg{width:20px;height:20px}
+    .event-icon.green{background:var(--green);color:#fff}.event-icon.blue{background:#2f6fe0;color:#fff}.event-icon.purple{background:var(--brand);color:#fff}.event-icon.amber{background:var(--amber);color:#fff}.event-icon.red{background:var(--red);color:#fff}
+    .event b{font-size:16px}.event .muted.small{font-size:13px;margin-top:3px}.event time{font-size:13px}
     /* 8.3: Диагностика concept v2 - summary row, inverted CTA, issues table, recommendations */
     .gauge-row.static{cursor:default}.gauge-row.static:hover{background:transparent}
     .diagnostics-cta.inverted{grid-template-columns:1fr;gap:14px;background:linear-gradient(135deg,#6550e6 0%,#7958eb 100%);border-color:transparent}.diagnostics-cta.inverted>div:nth-child(2){display:grid;gap:4px}.diagnostics-cta.inverted b,.diagnostics-cta.inverted span{color:#fff}.diagnostics-cta.inverted span{color:rgba(255,255,255,.78)}.diagnostics-cta.inverted .diagnostics-cta-icon{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.24);color:#fff;box-shadow:none}.diagnostics-cta.inverted .run-diagnostics{grid-column:1/-1;width:100%;margin:0;background:#fff;color:var(--brand);box-shadow:0 8px 20px rgba(20,15,50,.18)}.diagnostics-cta.inverted .run-diagnostics span{color:var(--brand)}.diagnostics-cta.inverted .run-diagnostics:hover{background:#f3f1ff}
@@ -574,7 +578,6 @@ export function platformHtml(nonce) {
       if(s._healthHistory===undefined&&healthHistoryLoadingSite!==s.site_id){healthHistoryLoadingSite=s.site_id;api('/v1/platform/sites/'+encodeURIComponent(s.site_id)+'/health-history?limit=10').then(data=>{s._healthHistory=data.history||[];healthHistoryLoadingSite='';if(currentView==='client-home')render()}).catch(()=>{s._healthHistory=[];healthHistoryLoadingSite=''})}
       if(s._overrides===undefined&&homeOverridesLoadingSite!==s.site_id){homeOverridesLoadingSite=s.site_id;api('/v1/platform/sites/'+encodeURIComponent(s.site_id)+'/overrides').then(data=>{s._overrides=data;homeOverridesLoadingSite='';if(currentView==='client-home')render()}).catch(()=>{homeOverridesLoadingSite=''})}
       const report=s._report,rows=leadRows(a,s),todayLeads=leadStats(a,s).today;
-      const statusBanner='<div class="banner home-status green"><i>✓</i><div><b>Всё работает</b><span>Сайт открывается, критических проблем не найдено.</span></div></div>';
       const statIcons={uptime:'<circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.3 2.3 4.7-5"/>',speed:'<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/>',incidents:'<path d="M12 4 3 20h18Z"/><path d="M12 10v4M12 17v.01"/>',leads:'<path d="M4 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/><circle cx="8" cy="11" r=".6" fill="currentColor"/><circle cx="12" cy="11" r=".6" fill="currentColor"/><circle cx="16" cy="11" r=".6" fill="currentColor"/>'};
       const tiles=[
         {label:'Доступность',value:report?report.uptimePercent+'%':'—',hint:report?'за '+report.days+' дней':'Загружаю…',icon:statIcons.uptime,tone:'purple'},
@@ -595,16 +598,21 @@ export function platformHtml(nonce) {
       const actionCard=(tag,attrs,icon,title,desc)=>'<'+tag+' class="quick-action-card" '+attrs+'><span class="quick-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'+icon+'</svg></span><b>'+h(title)+'</b><span class="quick-action-desc">'+h(desc)+'<i class="quick-action-chev">›</i></span></'+tag+'>';
       const quickActionsMarkup=actionCard('button','type="button" data-action="run-diagnostics"',globeIcon,'Проверить сайт','Быстрая проверка доступности и скорости')+actionCard('button','type="button" data-view="client-overview"',editIcon,'Изменить сайт','Управление контентом и настройками')+actionCard('a','href="'+h(s.target_url)+'" target="_blank" rel="noopener noreferrer"',externalIcon,'Открыть сайт','Перейти на ваш сайт в новом окне');
       const quickRow='<div class="quick-row"><section class="card quick-overview-card"><h2>Быстрый обзор</h2><div class="quick-statuses">'+quickStatusesMarkup+'</div></section>'+quickActionsMarkup+'</div>';
-      const eventIcons={lead:'✉',change:'✎','incident-opened':'⚠','incident-resolved':'✓',scan:'⟳'};
+      const eventIcons={
+        lead:{tone:'green',path:'<path d="M4 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/><circle cx="8" cy="11" r=".6" fill="currentColor"/><circle cx="12" cy="11" r=".6" fill="currentColor"/><circle cx="16" cy="11" r=".6" fill="currentColor"/>'},
+        change:{tone:'blue',path:'<path d="M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24 11 11 0 0 0 3.4.54 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11 11 0 0 0 .54 3.4 1 1 0 0 1-.25 1Z"/>'},
+        scan:{tone:'purple',path:'<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'},
+        'incident-resolved':{tone:'amber',path:'<path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z"/><path d="m9 12 2 2 4-4"/>'},
+        'incident-opened':{tone:'red',path:'<path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z"/><path d="M12 8v4M12 15v.01"/>'}
+      };
       const events=buildRecentEvents(a,s,8);
-      const eventsMarkup=events.length?events.map(e=>'<div class="event"><span class="event-icon">'+(eventIcons[e.type]||'•')+'</span><div><b>'+h(e.title)+'</b><div class="muted small">'+h(e.detail)+'</div></div><time>'+rel(e.timestamp)+'</time></div>').join(''):empty('Событий пока нет.');
-      const eventsCard='<section class="card"><div class="card-head"><div><h2>Последние события</h2><p>Заявки, изменения и проверки сайта</p></div></div>'+eventsMarkup+'</section>';
-      const leadsTodayCard='<section class="card leads-today"><div class="card-head"><div><h2>Заявки сегодня</h2></div></div><strong>'+todayLeads+'</strong><span class="stat-hint">'+(todayLeads?'новых обращений':'пока нет новых обращений')+'</span><svg class="stat-sparkline" viewBox="0 0 64 26" fill="none" aria-hidden="true"><polyline points="'+STAT_SPARKLINES.purple+'" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><button class="ghost wide" type="button" data-view="client-leads">Перейти к заявкам</button></section>';
+      const eventsMarkup=events.length?events.map(e=>{const icon=eventIcons[e.type]||eventIcons.scan;return '<div class="event"><span class="event-icon '+icon.tone+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'+icon.path+'</svg></span><div><b>'+h(e.title)+'</b><div class="muted small">'+h(e.detail)+'</div></div><time>'+rel(e.timestamp)+'</time></div>'}).join(''):empty('Событий пока нет.');
+      const eventsCard='<section class="card"><div class="card-head"><div><h2>Последние события</h2><p>Заявки, изменения и проверки сайта</p></div>'+(events.length?'<button class="ghost" type="button" data-view="client-leads">Все события →</button>':'')+'</div>'+eventsMarkup+'</section>';
+      const leadsTodayCard='<section class="card leads-today"><div class="card-head"><div><h2>Заявки сегодня</h2></div></div><strong>'+todayLeads+'</strong><span class="stat-hint">'+(todayLeads?'новых обращений':'пока нет новых обращений')+'</span><svg class="leads-today-chart" viewBox="0 0 220 70" fill="none" aria-hidden="true"><polyline points="4,50 30,44 56,48 82,32 108,36 134,18 160,24 190,10 216,16" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="216" cy="16" r="4" fill="currentColor"/></svg><button class="ghost wide" type="button" data-view="client-leads"><span>Перейти к заявкам</span><i class="quick-action-chev">›</i></button></section>';
       const statusLabels={new:'Новая',in_progress:'В работе',completed:'Готово',spam:'Спам'};
       const recentLeads=rows.slice(0,3);
       const leadsTable=recentLeads.length?'<div class="table-wrap"><table><thead><tr><th>Клиент</th><th>Источник</th><th>Сообщение</th><th>Статус</th><th>Дата</th></tr></thead><tbody>'+recentLeads.map(r=>'<tr><td>'+h(r.name||r.phone||r.email||'—')+'</td><td>'+h(r.formLabel||r.source||'Сайт')+'</td><td>'+h(String(r.message||'—').slice(0,60))+'</td><td><i class="lead-dot '+(r.status==='completed'?'ok':r.status==='new'?'warn':'')+'"></i>'+h(statusLabels[r.status]||r.status)+'</td><td>'+h(rel(r.receivedAt))+'</td></tr>').join('')+'</tbody></table></div>':empty('Заявок пока нет.');
       $('view').innerHTML=pageHead('Главная','Обзор и управление вашим сайтом','Ключевые показатели сайта — в одном месте.')
-        +statusBanner
         +tilesMarkup
         +quickRow
         +'<div class="two-col">'+eventsCard+'<aside>'+leadsTodayCard+'</aside></div>'

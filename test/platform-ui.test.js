@@ -69,9 +69,11 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /Последние события/u);
   assert.match(html, /Быстрый обзор/u);
   assert.match(html, /Заявки сегодня/u);
-  assert.match(html, /banner home-status/u);
+  assert.doesNotMatch(html, /banner home-status/u);
   assert.match(html, /class="grid stat-tiles"/u);
   assert.match(html, /class="stat-sparkline"/u);
+  assert.match(html, /quick-action-card/u);
+  assert.match(html, /leads-today-chart/u);
   assert.match(html, /Проверки и понятные причины — открытые вопросы решает помощник в чате справа/u);
   assert.match(html, /data-feature="reviews"/u);
   assert.match(html, /Посмотреть как клиент/u);
