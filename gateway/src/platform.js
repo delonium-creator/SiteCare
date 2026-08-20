@@ -1138,6 +1138,21 @@ async function siteHealthHistory(env, user, siteId, limit = 10) {
   return json({ ok: true, history: rows?.results || [] });
 }
 
+async function siteDiagnosticsCache(env, user, siteId) {
+  await siteAccess(env, user, siteId, "viewer");
+  const row = await env.GATEWAY_DB.prepare(
+    "SELECT diagnostics_json, checked_at FROM platform_diagnostics_cache WHERE site_id = ?"
+  ).bind(siteId).first();
+  if (!row) return json({ ok: true, diagnostics: null });
+  let diagnostics;
+  try {
+    diagnostics = JSON.parse(row.diagnostics_json);
+  } catch {
+    return json({ ok: true, diagnostics: null });
+  }
+  return json({ ok: true, diagnostics });
+}
+
 async function siteInsights(env, user, siteId, limit = 5) {
   await siteAccess(env, user, siteId, "viewer");
   const rows = await env.GATEWAY_DB.prepare(
@@ -3177,7 +3192,7 @@ export async function handlePlatformRoute(request, env, path) {
 
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})$/u.exec(path);
   if (request.method === "PATCH" && match) return updateSite(request, env, user, match[1]);
-  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(check|integration|report|content-changes|incidents|health-history|insights|lead-notifications)$/u.exec(path);
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(check|integration|report|content-changes|incidents|health-history|insights|diagnostics-cache|lead-notifications)$/u.exec(path);
   if (match) {
     if (request.method === "POST" && match[2] === "check") return checkOneSite(env, user, match[1]);
     if (request.method === "GET" && match[2] === "integration") return integration(request, env, user, match[1]);
@@ -3195,6 +3210,7 @@ export async function handlePlatformRoute(request, env, path) {
     if (request.method === "GET" && match[2] === "insights") {
       return siteInsights(env, user, match[1], Number(new URL(request.url).searchParams.get("limit") || 5));
     }
+    if (request.method === "GET" && match[2] === "diagnostics-cache") return siteDiagnosticsCache(env, user, match[1]);
     if (request.method === "PATCH" && match[2] === "lead-notifications") return updateLeadNotifications(request, env, user, match[1]);
   }
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/insights\/(\d+)\/dismiss$/u.exec(path);

@@ -52,7 +52,8 @@ const PLATFORM_MIGRATIONS = [
   "gateway/migrations/0021_ai_insights.sql",
   "gateway/migrations/0022_lead_notification_toggles.sql",
   "gateway/migrations/0023_yandex_metrica.sql",
-  "gateway/migrations/0024_image_alt_rules.sql"
+  "gateway/migrations/0024_image_alt_rules.sql",
+  "gateway/migrations/0025_diagnostics_cache.sql"
 ];
 
 test("site-wide loader safely recognizes visible phone numbers", () => {

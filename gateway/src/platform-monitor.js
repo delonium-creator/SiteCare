@@ -386,6 +386,7 @@ export function diagnosePage(html, pageUrl, observation = {}) {
   if (!/<meta\b[^>]*\bcharset\s*=/iu.test(source)) add({ id: `charset-missing:${path}`, category: "content", severity: "medium", title: "Не указана кодировка страницы", evidence: "В HTML отсутствует meta charset.", recommendation: "Обычно это ставится автоматически; проверьте, не повреждён ли пользовательский код в HEAD.", probableCause: "Тег meta charset мог быть удалён пользовательским кодом в HEAD." });
   if (Number(observation.latencyMs || 0) > 2500) add({ id: `latency:${path}`, category: "performance", severity: Number(observation.latencyMs) > 5000 ? "high" : "medium", title: "Страница отвечает медленно", evidence: `Время получения HTML: ${Number(observation.latencyMs)} мс.`, recommendation: "Повторите замер в другое время; если задержка сохраняется, проверьте тяжёлые скрипты, внешние сервисы и публикацию.", probableCause: "Вероятны задержка сети, перегруженный внешний сервис или тяжёлый пользовательский код; одного замера недостаточно для точной причины.", confidence: "medium" });
   if (source.length > 700_000) add({ id: `html-size:${path}`, category: "performance", severity: "medium", title: "HTML страницы слишком большой", evidence: `Размер HTML: ${Math.round(source.length / 1024)} КБ.`, recommendation: "Проверьте дублирующиеся блоки, встроенный код и объём контента.", probableCause: "На странице много блоков, встроенных данных или повторяющегося пользовательского кода." });
+  if (structuredDataCount === 0) add({ id: `ai-structured-data:${path}`, category: "ai", severity: "medium", title: "Нет микроразметки для ИИ-поиска и умных ответов", evidence: "На странице не найдено ни одного блока structured data (JSON-LD).", recommendation: "Добавьте разметку schema.org (LocalBusiness/Organization) с адресом, часами работы и контактами — так ИИ-сервисы и поисковики точнее берут данные с сайта, а не додумывают их.", probableCause: "Микроразметка не была добавлена при создании сайта.", confidence: "medium" });
 
   // Heuristic static-HTML checks, not a legal audit: a cookie banner injected
   // purely by a third-party script, or a policy page linked in a way this
@@ -697,7 +698,7 @@ export async function scanSiteInventory(site, fetchImpl = fetch, { maxPages = 40
         low: severityCounts.low,
         categories: categoryCounts,
         categoryScores: Object.fromEntries(
-          ["seo", "content", "accessibility", "mobile", "security", "performance", "social", "legal"].map((category) => [
+          ["seo", "content", "accessibility", "mobile", "security", "performance", "social", "legal", "ai"].map((category) => [
             category,
             computeHealthScore(categorySeverityCounts(diagnosticIssues, category))
           ])
@@ -992,7 +993,10 @@ export async function recordHealthCheck(env, site, inventory) {
     ).bind(site.site_id, checkedAt, score, summary.high || 0, summary.medium || 0, summary.low || 0, summary.total || 0),
     env.GATEWAY_DB.prepare(
       "DELETE FROM platform_health_history WHERE site_id = ? AND id NOT IN (SELECT id FROM platform_health_history WHERE site_id = ? ORDER BY id DESC LIMIT 60)"
-    ).bind(site.site_id, site.site_id)
+    ).bind(site.site_id, site.site_id),
+    env.GATEWAY_DB.prepare(
+      "INSERT INTO platform_diagnostics_cache (site_id, diagnostics_json, checked_at) VALUES (?, ?, ?) ON CONFLICT(site_id) DO UPDATE SET diagnostics_json = excluded.diagnostics_json, checked_at = excluded.checked_at"
+    ).bind(site.site_id, JSON.stringify(inventory.diagnostics || {}), checkedAt)
   ]);
   return { score, ...summary };
 }
