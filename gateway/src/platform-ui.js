@@ -123,6 +123,9 @@ export function platformHtml(nonce) {
     .quick-status-icon svg{width:19px;height:19px}
     .quick-status-card.bad .quick-status-icon{background:var(--red)}
     .quick-status-icon.branded{background:var(--brand)}
+    .quick-status-icon.brand-site{background:#2f6fe0}
+    .quick-status-icon.brand-telegram{background:#229ED9}
+    .quick-status-icon.brand-metrica{background:#FC3F1D}
     .quick-status-icon.branded.dim{filter:grayscale(.85);opacity:.55}
     @media(max-width:1320px){.quick-pair-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
     @media(max-width:860px){.quick-pair-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -706,13 +709,13 @@ export function platformHtml(nonce) {
       const domainReady=Boolean(s.domain_expires_at)&&!s.domain_check_error&&domainDaysLeft>30;
       const siteIcon='<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18Z"/>',leadsIcon='<path d="M4 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/><circle cx="8" cy="11" r=".6" fill="currentColor"/><circle cx="12" cy="11" r=".6" fill="currentColor"/><circle cx="16" cy="11" r=".6" fill="currentColor"/>',telegramIcon='<path d="m22 2-7 20-4-9-9-4 20-7Z"/><path d="M11 13 22 2"/>',metricaIcon='<path d="M4 20V10M12 20V4M20 20v-7"/>',domainIcon='<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>';
       const statusItems=[
-        {ready:siteReady,attr:'data-action="check-site"',icon:siteIcon,color:'#2f6fe0',okLabel:'Сайт открывается',okHint:'Доступен для посетителей',badLabel:'Сайт требует проверки',badHint:'Нажмите, чтобы проверить снова'},
+        {ready:siteReady,attr:'data-action="check-site"',icon:siteIcon,colorClass:'brand-site',okLabel:'Сайт открывается',okHint:'Доступен для посетителей',badLabel:'Сайт требует проверки',badHint:'Нажмите, чтобы проверить снова'},
         {ready:webhookReady,attr:'data-view="client-leads"',icon:leadsIcon,okLabel:'Заявки приходят',okHint:'Форма работает корректно',badLabel:'Заявки не подключены',badHint:'Откройте раздел с заявками'},
-        {ready:telegramReady,attr:'data-action="telegram-dialog"',icon:telegramIcon,color:'#229ED9',okLabel:'Telegram подключён',okHint:'Уведомления активны',badLabel:'Telegram не подключён',badHint:'Подключение займёт около минуты'},
-        {ready:metricaReady,attr:'data-action="yandex-metrica-dialog"',icon:metricaIcon,color:'#FC3F1D',okLabel:'Яндекс Метрика подключена',okHint:'Статистика учитывается',badLabel:s.metrika_counter_id?'Счётчик найден, не подключён':'Яндекс Метрика не подключена',badHint:'Нажмите, чтобы подключить'},
+        {ready:telegramReady,attr:'data-action="telegram-dialog"',icon:telegramIcon,colorClass:'brand-telegram',okLabel:'Telegram подключён',okHint:'Уведомления активны',badLabel:'Telegram не подключён',badHint:'Подключение займёт около минуты'},
+        {ready:metricaReady,attr:'data-action="yandex-metrica-dialog"',icon:metricaIcon,colorClass:'brand-metrica',okLabel:'Яндекс Метрика подключена',okHint:'Статистика учитывается',badLabel:s.metrika_counter_id?'Счётчик найден, не подключён':'Яндекс Метрика не подключена',badHint:'Нажмите, чтобы подключить'},
         {ready:domainReady,attr:'data-action="domain-detail"',icon:domainIcon,okLabel:'Домен активен',okHint:'До '+fmt(s.domain_expires_at),badLabel:s.domain_check_error?'Не удалось проверить домен':!s.domain_expires_at?'Срок домена неизвестен':domainDaysLeft<0?'Домен истёк':'Домен скоро истекает',badHint:s.domain_expires_at&&!s.domain_check_error?'Осталось '+domainDaysLeft+' дн.':'Нажмите для подробностей'}
       ];
-      const statusCard=it=>'<button class="quick-action-card quick-status-card '+(it.ready?'ok':'bad')+'" type="button" '+it.attr+'><span class="quick-status-icon'+(it.color?' branded'+(it.ready?'':' dim'):'')+'"'+(it.color?' style="background:'+it.color+'"':'')+'><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'+it.icon+'</svg></span><b>'+h(it.ready?it.okLabel:it.badLabel)+'</b><span class="quick-action-desc">'+h(it.ready?it.okHint:it.badHint)+'</span></button>';
+      const statusCard=it=>'<button class="quick-action-card quick-status-card '+(it.ready?'ok':'bad')+'" type="button" '+it.attr+'><span class="quick-status-icon'+(it.colorClass?' branded '+it.colorClass+(it.ready?'':' dim'):'')+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'+it.icon+'</svg></span><b>'+h(it.ready?it.okLabel:it.badLabel)+'</b><span class="quick-action-desc">'+h(it.ready?it.okHint:it.badHint)+'</span></button>';
       const quickItems=[statusCard(statusItems[0])];
       if(leadsOn)quickItems.push(statusCard(statusItems[1]));
       quickItems.push(statusCard(statusItems[2]),statusCard(statusItems[3]),statusCard(statusItems[4]));
