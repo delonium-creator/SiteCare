@@ -677,9 +677,14 @@ export function platformHtml(nonce) {
       const statusCard=it=>'<button class="quick-action-card quick-status-card '+(it.ready?'ok':'bad')+'" type="button" '+it.attr+'><span class="quick-status-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'+(it.ready?checkIcon:warnIcon)+'</svg></span><b>'+h(it.ready?it.okLabel:it.badLabel)+'</b><span class="quick-action-desc">'+h(it.ready?it.okHint:it.badHint)+'</span></button>';
       const globeIcon='<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18Z"/>',externalIcon='<path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/>',chartIcon='<path d="M4 20V10M12 20V4M20 20v-7"/>';
       const actionCard=(tag,attrs,icon,title,desc)=>'<'+tag+' class="quick-action-card" '+attrs+'><span class="quick-action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'+icon+'</svg></span><b>'+h(title)+'</b><span class="quick-action-desc">'+h(desc)+'<i class="quick-action-chev">›</i></span></'+tag+'>';
-      const quickItems=[statusCard(statusItems[0]),actionCard('button','type="button" data-action="run-diagnostics"',globeIcon,'Проверить сайт','Быстрая проверка доступности и скорости')];
+      const quickItems=[statusCard(statusItems[0])];
       if(leadsOn)quickItems.push(statusCard(statusItems[1]));
-      quickItems.push(actionCard('button','type="button" data-action="yandex-metrica-dialog"',chartIcon,'Яндекс Метрика',s.metrika_counter_id?'Счётчик найден — подключите доступ':'Статистика посещений сайта'),statusCard(statusItems[2]),actionCard('a','href="'+h(s.target_url)+'" target="_blank" rel="noopener noreferrer"',externalIcon,'Открыть сайт','Перейти на ваш сайт в новом окне'));
+      quickItems.push(
+        statusCard(statusItems[2]),
+        actionCard('button','type="button" data-action="run-diagnostics"',globeIcon,'Проверить сайт','Быстрая проверка доступности и скорости'),
+        actionCard('button','type="button" data-action="yandex-metrica-dialog"',chartIcon,'Яндекс Метрика',s.metrika_counter_id?'Счётчик найден — подключите доступ':'Статистика посещений сайта'),
+        actionCard('a','href="'+h(s.target_url)+'" target="_blank" rel="noopener noreferrer"',externalIcon,'Открыть сайт','Перейти на ваш сайт в новом окне')
+      );
       const quickPairGrid='<div class="quick-pair-grid">'+quickItems.join('')+'</div>';
       const quickRow='<h2 class="quick-row-title">Быстрый обзор</h2>'+quickPairGrid;
       const allEvents=buildRecentEvents(a,s,30),events=allEvents.slice(0,4);
