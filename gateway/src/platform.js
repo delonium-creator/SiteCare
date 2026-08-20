@@ -2725,12 +2725,12 @@ async function siteSelectionResult(env, user, siteId) {
 
 async function telegramStatus(env, user, siteId) {
   const { site } = await siteAccess(env, user, siteId, "viewer");
-  const row = await env.GATEWAY_DB.prepare("SELECT chat_type, linked_at, enabled, notify_leads FROM telegram_destinations WHERE site_id = ?").bind(siteId).first();
+  const row = await env.GATEWAY_DB.prepare("SELECT chat_type, chat_name, linked_at, enabled, notify_leads FROM telegram_destinations WHERE site_id = ?").bind(siteId).first();
   const bot = await env.GATEWAY_DB.prepare("SELECT value FROM gateway_settings WHERE key = 'bot_username'").first();
   return json({
     ok: true,
     configured: Boolean(row?.enabled),
-    destination: row?.enabled ? row.chat_type === "private" ? "личный чат" : "группа" : null,
+    destination: row?.enabled ? row.chat_name || (row.chat_type === "private" ? "личный чат" : "группа") : null,
     linkedAt: row?.linked_at || null,
     botUsername: bot?.value || null,
     notifyLeads: row ? Number(row.notify_leads) === 1 : true,

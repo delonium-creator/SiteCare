@@ -17,9 +17,15 @@ async function createGatewayDatabase() {
     d1Databases: ["GATEWAY_DB"]
   });
   const database = await runtime.getD1Database("GATEWAY_DB");
-  const migration = await readFile("gateway/migrations/0001_initial.sql", "utf8");
-  const statements = migration.split(/;\s*(?:\n|$)/u).map((statement) => statement.trim()).filter(Boolean);
-  for (const statement of statements) await database.prepare(statement).run();
+  // Only 0001 plus any later migration that touches a table this legacy
+  // gateway suite exercises directly -- it doesn't run the full platform
+  // migration chain the way test/platform.test.js does.
+  const migrationFiles = ["gateway/migrations/0001_initial.sql", "gateway/migrations/0026_telegram_destination_name.sql"];
+  for (const file of migrationFiles) {
+    const migration = await readFile(file, "utf8");
+    const statements = migration.split(/;\s*(?:\n|$)/u).map((statement) => statement.trim()).filter(Boolean);
+    for (const statement of statements) await database.prepare(statement).run();
+  }
   return { runtime, database };
 }
 

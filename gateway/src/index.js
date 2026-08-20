@@ -230,14 +230,14 @@ async function handleCreateConnection(request, env, site) {
 
 async function destinationState(env, site) {
   const row = await env.GATEWAY_DB.prepare(
-    "SELECT chat_type, linked_at, enabled FROM telegram_destinations WHERE site_id = ?"
+    "SELECT chat_type, chat_name, linked_at, enabled FROM telegram_destinations WHERE site_id = ?"
   ).bind(site.site_id).first();
   const botUsername = await setting(env, "bot_username");
   return {
     ok: true,
     configured: Boolean(row?.enabled),
     enabled: Boolean(row?.enabled),
-    destination: row?.enabled ? row.chat_type === "private" ? "личный чат" : "группа" : null,
+    destination: row?.enabled ? row.chat_name || (row.chat_type === "private" ? "личный чат" : "группа") : null,
     linkedAt: row?.linked_at || null,
     botUsername: botUsername || null
   };
@@ -331,6 +331,7 @@ async function handleTelegramWebhook(request, env) {
   const chatId = String(message?.chat?.id || "");
   const chatType = String(message?.chat?.type || "");
   const telegramUserId = message?.from?.id ? String(message.from.id) : null;
+  const senderName = message?.from ? ([message.from.first_name, message.from.last_name].filter(Boolean).join(" ") || (message.from.username ? "@" + message.from.username : "")) : "";
   const receivedAt = new Date().toISOString();
 
   if (parameter && SUPPORT_START_PARAMETER_PATTERN.test(parameter) && /^\d{1,24}$/u.test(chatId) && chatType === "private") {
@@ -372,9 +373,9 @@ async function handleTelegramWebhook(request, env) {
     if (session && !session.used_at && session.expires_at > receivedAt) {
       await env.GATEWAY_DB.batch([
         env.GATEWAY_DB.prepare(
-          "INSERT INTO telegram_destinations (site_id, chat_id, chat_type, telegram_user_id, linked_at, enabled) VALUES (?, ?, ?, ?, ?, 1) " +
-          "ON CONFLICT(site_id) DO UPDATE SET chat_id = excluded.chat_id, chat_type = excluded.chat_type, telegram_user_id = excluded.telegram_user_id, linked_at = excluded.linked_at, enabled = 1"
-        ).bind(session.site_id, chatId, chatType, telegramUserId, receivedAt),
+          "INSERT INTO telegram_destinations (site_id, chat_id, chat_type, telegram_user_id, chat_name, linked_at, enabled) VALUES (?, ?, ?, ?, ?, ?, 1) " +
+          "ON CONFLICT(site_id) DO UPDATE SET chat_id = excluded.chat_id, chat_type = excluded.chat_type, telegram_user_id = excluded.telegram_user_id, chat_name = excluded.chat_name, linked_at = excluded.linked_at, enabled = 1"
+        ).bind(session.site_id, chatId, chatType, telegramUserId, senderName || null, receivedAt),
         env.GATEWAY_DB.prepare("UPDATE telegram_connect_sessions SET used_at = ? WHERE token_hash = ? AND used_at IS NULL")
           .bind(receivedAt, tokenHash),
         env.GATEWAY_DB.prepare("INSERT INTO telegram_updates (update_id, received_at) VALUES (?, ?)")
