@@ -650,11 +650,12 @@ async function accountDetails(env, account, role, platformRole = "user", { inclu
   const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const [sitesResult, membersResult, incidentsResult, usage, counts, receiptsResult, activityResult, notesResult, billingEventsResult, featureResult, leadsResult, invitesResult, accessRequestsResult] = await Promise.all([
     env.GATEWAY_DB.prepare(
-      "SELECT s.*, COALESCE(d.enabled, 0) AS telegram_enabled, rs.yandex_widget_url, rs.dgis_widget_url, ld.summary_text AS digest_summary, ld.created_at AS digest_created_at " +
+      "SELECT s.*, COALESCE(d.enabled, 0) AS telegram_enabled, rs.yandex_widget_url, rs.dgis_widget_url, ld.summary_text AS digest_summary, ld.created_at AS digest_created_at, ym.connected_at AS yandex_metrica_connected_at " +
       "FROM platform_sites s " +
       "LEFT JOIN telegram_destinations d ON d.site_id = s.site_id " +
       "LEFT JOIN platform_review_sources rs ON rs.site_id = s.site_id " +
       "LEFT JOIN (SELECT site_id, summary_text, created_at FROM platform_digests d1 WHERE created_at = (SELECT MAX(created_at) FROM platform_digests d2 WHERE d2.site_id = d1.site_id)) ld ON ld.site_id = s.site_id " +
+      "LEFT JOIN yandex_metrica_connections ym ON ym.site_id = s.site_id " +
       "WHERE s.account_id = ? AND s.status != 'archived' ORDER BY s.created_at"
     ).bind(account.account_id).all(),
     env.GATEWAY_DB.prepare(
