@@ -112,7 +112,7 @@ export function platformHtml(nonce) {
     .home-cta{grid-template-columns:1fr;gap:14px;background:radial-gradient(circle at 90% 0,rgba(124,97,236,.14),transparent 40%),linear-gradient(150deg,#faf9ff 0%,#f3f1ff 100%)}.home-cta>div:nth-child(2){display:grid;gap:4px}.home-cta .run-diagnostics{grid-column:1/-1;width:100%;margin:0;box-shadow:0 10px 24px rgba(101,80,230,.32)}
     /* 8.2: Главная concept v2 - quick overview, timeline, leads-today */
     .quick-row-title{margin:0 0 14px;font-size:18px;font-weight:800;letter-spacing:-.02em}
-    .quick-pair-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .quick-pair-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
     .quick-action-card{display:flex;flex-direction:column;gap:11px;padding:22px;border:1px solid var(--line);border-radius:16px;background:#fff;text-align:left;text-decoration:none;color:inherit;transition:box-shadow .16s ease,border-color .16s ease,transform .16s ease}
     .quick-action-card:hover{border-color:#d7d2f5;box-shadow:0 8px 20px rgba(28,34,53,.06);transform:translateY(-1px)}
     .quick-action-icon{color:var(--brand)}.quick-action-icon svg{width:26px;height:26px}
@@ -122,7 +122,9 @@ export function platformHtml(nonce) {
     .quick-status-icon{display:grid;place-items:center;width:36px;height:36px;border-radius:50%;flex:0 0 auto;background:var(--green);color:#fff}
     .quick-status-icon svg{width:19px;height:19px}
     .quick-status-card.bad .quick-status-icon{background:var(--red)}
-    @media(max-width:860px){.quick-pair-grid{grid-template-columns:1fr}}
+    @media(max-width:1320px){.quick-pair-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+    @media(max-width:860px){.quick-pair-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:620px){.quick-pair-grid{grid-template-columns:1fr}}
     .leads-today strong{display:block;margin:4px 0 2px;font-size:36px;line-height:1}
     .leads-today-chart{display:block;width:100%;height:70px;margin:16px 0 18px;color:var(--brand)}
     .leads-today .ghost{margin-top:0;display:flex;align-items:center;justify-content:space-between;gap:8px}
