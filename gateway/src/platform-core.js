@@ -218,7 +218,10 @@ export function integrationUrls(origin, site) {
   const base = String(origin || "").replace(/\/$/u, "");
   return {
     webhookBase: `${base}/v1/platform/forms/${encodeURIComponent(site.site_id)}/webhook`,
-    loaderCode: `<script src="${base}/sitecare-loader.js" data-sitecare-site="${site.site_id}" data-sitecare-key="${site.loader_key}" defer></script>`
+    loaderCode: `<script src="${base}/sitecare-loader.js" data-sitecare-site="${site.site_id}" data-sitecare-key="${site.loader_key}" defer></script>`,
+    reviewsWidgetCode: site.reviews_widget_key
+      ? `<div data-sitecare-reviews></div>\n<script src="${base}/sitecare-reviews-widget.js" data-sitecare-site="${site.site_id}" data-sitecare-key="${site.reviews_widget_key}" defer></script>`
+      : null
   };
 }
 
@@ -850,6 +853,274 @@ export function loaderJavascript() {
   // The public loader is a separate script, so it needs the same tiny helper
   // in its own scope instead of relying on the gateway bundle scope.
   return `(()=>{"use strict";const __name=(target,value)=>Object.defineProperty(target,"name",{value,configurable:true});const replacePhoneText=${replacePhoneNumbersInText.toString()};const makePhoneHref=${phoneHref.toString()};const replaceScheduleText=${replaceScheduleInText.toString()};(${sitecareLoaderRuntime.toString()})(replacePhoneText,makePhoneHref,replaceScheduleText)})();`;
+}
+
+// One generator function per design_template_key. Pure string-in/string-out
+// so the SAME function can be `.toString()`-inlined into the public widget
+// script (below) and imported directly by the dashboard's own preview --
+// the dashboard preview and the live site can never visually diverge
+// because there is only one implementation of "what a widget looks like".
+function escapeReviewsHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/gu, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+function reviewsStars(rating) {
+  const value = Math.max(0, Math.min(5, Math.round(Number(rating) || 0)));
+  return "★★★★★☆☆☆☆☆".slice(5 - value, 10 - value);
+}
+
+function renderClassicReviewsTemplate(widget) {
+  const reviews = Array.isArray(widget?.reviews) ? widget.reviews.slice(0, 20) : [];
+  const cards = reviews.map((review) => (
+    "<article class='sc-reviews-card'>" +
+    "<header class='sc-reviews-card-head'>" +
+    (review.authorAvatarUrl ? "<img class='sc-reviews-avatar' src='" + escapeReviewsHtml(review.authorAvatarUrl) + "' alt='' loading='lazy' referrerpolicy='no-referrer'>" : "<span class='sc-reviews-avatar sc-reviews-avatar-placeholder'></span>") +
+    "<div><b class='sc-reviews-author'>" + escapeReviewsHtml(review.authorName || "Гость") + "</b>" +
+    (review.rating ? "<span class='sc-reviews-stars'>" + reviewsStars(review.rating) + "</span>" : "") +
+    "</div></header>" +
+    (review.text ? "<p class='sc-reviews-text'>" + escapeReviewsHtml(review.text) + "</p>" : "") +
+    "</article>"
+  )).join("");
+  return { html: "<div class='sc-reviews-classic'>" + (cards || "<p class='sc-reviews-empty'>Отзывов пока нет.</p>") + "</div>", styleKey: "classic" };
+}
+
+// "Один отзыв" -- one review in focus with prev/next navigation. The
+// renderer only emits the container + a JSON payload of the (already
+// truncated) review list in a data attribute; sitecareReviewsRuntime fills
+// in the first slide and wires the nav buttons after mount (see
+// initSpotlights below) -- a template renderer stays a pure string
+// function, but this one kind of widget needs a little client-side state
+// (which slide is showing) that a static string can't carry by itself.
+function renderSpotlightReviewsTemplate(widget) {
+  const reviews = Array.isArray(widget?.reviews) ? widget.reviews.slice(0, 20) : [];
+  if (!reviews.length) return { html: "<div class='sc-reviews-spotlight'><p class='sc-reviews-empty'>Отзывов пока нет.</p></div>", styleKey: "spotlight" };
+  const slides = reviews.map((review) => ({
+    authorName: review.authorName || "Гость",
+    rating: Number(review.rating) || 0,
+    text: review.text || ""
+  }));
+  const source = widget?.serviceLabel || "";
+  const summary = (widget?.averageRating != null ? "<b class='sc-reviews-spotlight-score'>" + Number(widget.averageRating).toFixed(1) + "</b><span class='sc-reviews-stars'>" + reviewsStars(widget.averageRating) + "</span>" : "") +
+    (widget?.reviewCount ? "<span class='sc-reviews-spotlight-count'>" + widget.reviewCount + " отзывов</span>" : "");
+  const dataAttr = JSON.stringify(slides).replace(/"/gu, "&quot;");
+  return {
+    html: "<div class='sc-reviews-spotlight' data-sc-spotlight data-sc-source=\"" + escapeReviewsHtml(source) + "\" data-sc-reviews=\"" + dataAttr + "\">" +
+      "<div class='sc-reviews-spotlight-head'>" + summary + "</div>" +
+      "<blockquote class='sc-reviews-spotlight-quote'></blockquote>" +
+      "<div class='sc-reviews-spotlight-byline'><b class='sc-reviews-spotlight-author'></b><span class='sc-reviews-stars sc-reviews-spotlight-stars'></span></div>" +
+      "<div class='sc-reviews-spotlight-nav'>" +
+      "<button type='button' class='sc-reviews-spotlight-prev' aria-label='Предыдущий отзыв'>‹</button>" +
+      "<span class='sc-reviews-spotlight-pos'></span>" +
+      "<button type='button' class='sc-reviews-spotlight-next' aria-label='Следующий отзыв'>›</button>" +
+      "</div></div>",
+    styleKey: "spotlight"
+  };
+}
+
+// "Строки" -- a dense list, one line-clamped row per review. Built for
+// scanning many reviews in a small footprint (narrow columns, sidebars).
+function renderRowsReviewsTemplate(widget) {
+  const reviews = Array.isArray(widget?.reviews) ? widget.reviews.slice(0, 20) : [];
+  const rows = reviews.map((review) => (
+    "<div class='sc-reviews-row'>" +
+    "<div class='sc-reviews-row-head'><b>" + escapeReviewsHtml(review.authorName || "Гость") + "</b>" +
+    (review.rating ? "<span class='sc-reviews-stars'>" + reviewsStars(review.rating) + "</span>" : "") +
+    "</div>" +
+    (review.text ? "<p class='sc-reviews-row-text'>" + escapeReviewsHtml(review.text) + "</p>" : "") +
+    "</div>"
+  )).join("");
+  return { html: "<div class='sc-reviews-rows'>" + (rows || "<p class='sc-reviews-empty'>Отзывов пока нет.</p>") + "</div>", styleKey: "rows" };
+}
+
+// "Источники на первом плане" -- every review carries a visible badge
+// naming the exact service it came from, foregrounding the fact that
+// reviews come from independent third-party platforms rather than one
+// unverifiable in-house list.
+function renderSourcesReviewsTemplate(widget) {
+  const reviews = Array.isArray(widget?.reviews) ? widget.reviews.slice(0, 20) : [];
+  const source = escapeReviewsHtml(widget?.serviceLabel || "");
+  const rows = reviews.map((review) => (
+    "<div class='sc-reviews-source-row'>" +
+    (review.rating ? "<span class='sc-reviews-stars sc-reviews-source-rating'>" + reviewsStars(review.rating) + "</span>" : "") +
+    (review.text ? "<p class='sc-reviews-source-text'>" + escapeReviewsHtml(review.text) + "</p>" : "") +
+    "<div class='sc-reviews-source-meta'><b>" + escapeReviewsHtml(review.authorName || "Гость") + "</b>" +
+    (source ? "<span class='sc-reviews-source-badge'>" + source + "</span>" : "") +
+    "</div></div>"
+  )).join("");
+  return { html: "<div class='sc-reviews-sources'>" + (rows || "<p class='sc-reviews-empty'>Отзывов пока нет.</p>") + "</div>", styleKey: "sources" };
+}
+
+const TEMPLATE_RENDERERS = Object.freeze({
+  classic: renderClassicReviewsTemplate,
+  spotlight: renderSpotlightReviewsTemplate,
+  rows: renderRowsReviewsTemplate,
+  sources: renderSourcesReviewsTemplate
+});
+const TEMPLATE_STYLES = Object.freeze({
+  classic: ".sc-reviews-classic{display:grid;gap:14px;font:14px/1.5 -apple-system,'Segoe UI',sans-serif;color:#171b25}" +
+    ".sc-reviews-card{border:1px solid #e4e6ef;border-radius:14px;padding:14px 16px;background:#fff}" +
+    ".sc-reviews-card-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}" +
+    ".sc-reviews-avatar{width:36px;height:36px;border-radius:50%;object-fit:cover;flex:0 0 auto}" +
+    ".sc-reviews-avatar-placeholder{background:#e4e6ef;display:inline-block}" +
+    ".sc-reviews-author{display:block}.sc-reviews-stars{color:#ffb81c;font-size:13px;letter-spacing:1px}" +
+    ".sc-reviews-text{margin:0;white-space:pre-wrap;word-break:break-word}" +
+    ".sc-reviews-empty{color:#6b7280;margin:0}",
+  spotlight: ".sc-reviews-spotlight{font:14px/1.6 -apple-system,'Segoe UI',sans-serif;color:#171b25;text-align:center;background:#fff;border:1px solid #e4e6ef;border-radius:14px;padding:24px 20px}" +
+    ".sc-reviews-spotlight-head{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:18px}" +
+    ".sc-reviews-spotlight-score{font-size:22px;font-weight:800}" +
+    ".sc-reviews-spotlight-count{color:#6b7280;font-size:13px}" +
+    ".sc-reviews-spotlight-quote{margin:0 auto;max-width:520px;font-size:19px;line-height:1.55;font-style:normal;quotes:'\\00AB' '\\00BB'}" +
+    ".sc-reviews-spotlight-quote:before{content:open-quote}.sc-reviews-spotlight-quote:after{content:close-quote}" +
+    ".sc-reviews-spotlight-byline{margin-top:16px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;color:#6b7280}" +
+    ".sc-reviews-spotlight-byline b{color:#171b25;font-weight:600}" +
+    ".sc-reviews-spotlight-nav{margin-top:16px;display:flex;align-items:center;justify-content:center;gap:14px}" +
+    ".sc-reviews-spotlight-prev,.sc-reviews-spotlight-next{width:32px;height:32px;border-radius:50%;border:1px solid #e4e6ef;background:#fff;font-size:16px;line-height:1;cursor:pointer;color:#171b25}" +
+    ".sc-reviews-spotlight-prev:hover,.sc-reviews-spotlight-next:hover{background:#f5f5f8}" +
+    ".sc-reviews-spotlight-pos{font-size:13px;color:#6b7280;min-width:56px}",
+  rows: ".sc-reviews-rows{font:14px/1.5 -apple-system,'Segoe UI',sans-serif;color:#171b25;background:#fff;border:1px solid #e4e6ef;border-radius:14px;overflow:hidden}" +
+    ".sc-reviews-row{padding:13px 16px;border-bottom:1px solid #e4e6ef}.sc-reviews-row:last-child{border-bottom:0}" +
+    ".sc-reviews-row-head{display:flex;align-items:center;gap:10px}" +
+    ".sc-reviews-row-text{margin:4px 0 0;color:#4b5160;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}",
+  sources: ".sc-reviews-sources{display:grid;gap:12px;font:14px/1.5 -apple-system,'Segoe UI',sans-serif;color:#171b25}" +
+    ".sc-reviews-source-row{padding:14px 16px;border:1px solid #e4e6ef;border-radius:14px;background:#fff}" +
+    ".sc-reviews-source-text{margin:6px 0 10px;white-space:pre-wrap;word-break:break-word}" +
+    ".sc-reviews-source-meta{display:flex;align-items:center;justify-content:space-between;gap:10px}" +
+    ".sc-reviews-source-badge{flex:0 0 auto;font-size:12px;font-weight:600;color:#5140bd;background:#f0edff;padding:3px 10px;border-radius:999px}"
+});
+
+export function renderReviewsTemplate(templateKey, widget) {
+  const renderer = TEMPLATE_RENDERERS[templateKey] || TEMPLATE_RENDERERS.classic;
+  return renderer(widget);
+}
+
+export const REVIEW_TEMPLATE_KEYS = Object.freeze(Object.keys(TEMPLATE_RENDERERS));
+
+// Deliberately narrower than sitecareLoaderRuntime in three ways (all
+// decided during planning): a single fetch on load instead of 5s polling
+// (review data changes on the order of days, not seconds); an explicit
+// `[data-sitecare-reviews]` mount point the client places themselves
+// instead of auto-appending new UI to an unpredictable spot on the page;
+// and scoped, once-injected <style> per template instead of relying on the
+// host page's CSS.
+function sitecareReviewsRuntime(renderTemplate, templateStyles) {
+  "use strict";
+  const script = document.currentScript || [...(document.scripts || [])].reverse().find((item) =>
+    item?.dataset?.sitecareSite && item?.dataset?.sitecareKey && /\/sitecare-reviews-widget\.js(?:[?#]|$)/u.test(item.src || "")
+  );
+  if (!script) return;
+  const id = script.dataset.sitecareSite || "";
+  const key = script.dataset.sitecareKey || "";
+  if (!/^[a-z0-9_-]{3,80}$/i.test(id) || !/^[A-Za-z0-9_-]{20,128}$/.test(key)) return;
+  const base = new URL(script.src).origin;
+  const injectedStyles = new Set();
+
+  function ensureStyle(styleKey) {
+    if (!styleKey || injectedStyles.has(styleKey) || document.querySelector("style[data-sitecare-reviews-style='" + styleKey + "']")) return;
+    const css = templateStyles[styleKey];
+    if (!css) return;
+    const style = document.createElement("style");
+    style.setAttribute("data-sitecare-ignore", "");
+    style.setAttribute("data-sitecare-reviews-style", styleKey);
+    style.textContent = css;
+    document.head?.appendChild(style);
+    injectedStyles.add(styleKey);
+  }
+
+  function render(config) {
+    const targets = document.querySelectorAll("[data-sitecare-reviews]");
+    if (!targets.length) {
+      document.documentElement?.setAttribute("data-sitecare-reviews-status", "no-target");
+      return;
+    }
+    const widgets = Array.isArray(config?.widgets) ? config.widgets : [];
+    // Iframe-embed widgets (e.g. Flamp -- see review-sources/flamp.js) have
+    // no review data to template; the visitor's own browser loads the
+    // iframe straight from the source, same as the client site's own
+    // browser would load any other embedded widget.
+    const escapeAttr = (value) => String(value ?? "").replace(/"/g, "&quot;");
+    const parts = widgets.map((widget) => {
+      if (widget.renderMode === "iframe" && widget.embedUrl) {
+        return "<iframe class='sc-reviews-embed' src=\"" + escapeAttr(widget.embedUrl) + "\" loading='lazy' referrerpolicy='no-referrer-when-downgrade' style='width:100%;min-height:400px;border:0'></iframe>";
+      }
+      const rendered = renderTemplate(widget.designTemplateKey, widget);
+      ensureStyle(rendered.styleKey);
+      return rendered.html;
+    });
+    const html = parts.length ? parts.join("") : "";
+    for (const target of targets) {
+      target.innerHTML = html;
+      for (const spotlight of target.querySelectorAll("[data-sc-spotlight]")) initSpotlight(spotlight);
+    }
+    document.documentElement?.setAttribute("data-sitecare-reviews-status", widgets.length ? "ready" : "empty");
+  }
+
+  // "Один отзыв" needs a little client-side state (which slide is active)
+  // that the template renderer -- a pure string function -- can't carry by
+  // itself; this reads the JSON payload the renderer left in a data
+  // attribute and wires the prev/next buttons once, after mount.
+  function initSpotlight(container) {
+    let slides = [];
+    try {
+      slides = JSON.parse(container.dataset.scReviews || "[]");
+    } catch {
+      return;
+    }
+    if (!slides.length) return;
+    const source = container.dataset.scSource || "";
+    const quote = container.querySelector(".sc-reviews-spotlight-quote");
+    const author = container.querySelector(".sc-reviews-spotlight-author");
+    const stars = container.querySelector(".sc-reviews-spotlight-stars");
+    const pos = container.querySelector(".sc-reviews-spotlight-pos");
+    let index = 0;
+    const starGlyphs = (rating) => "★★★★★☆☆☆☆☆".slice(5 - Math.max(0, Math.min(5, rating)), 10 - Math.max(0, Math.min(5, rating)));
+    function paint() {
+      const slide = slides[index];
+      if (quote) quote.textContent = slide.text;
+      if (author) author.textContent = slide.authorName + (source ? " — " + source : "");
+      if (stars) stars.textContent = starGlyphs(slide.rating);
+      if (pos) pos.textContent = (index + 1) + " / " + slides.length;
+    }
+    container.querySelector(".sc-reviews-spotlight-prev")?.addEventListener("click", () => {
+      index = (index - 1 + slides.length) % slides.length;
+      paint();
+    });
+    container.querySelector(".sc-reviews-spotlight-next")?.addEventListener("click", () => {
+      index = (index + 1) % slides.length;
+      paint();
+    });
+    paint();
+  }
+
+  async function load() {
+    try {
+      const response = await fetch(base + "/v1/public/sites/" + encodeURIComponent(id) + "/reviews?key=" + encodeURIComponent(key), {
+        mode: "cors",
+        credentials: "omit",
+        cache: "no-store",
+        referrerPolicy: "no-referrer"
+      });
+      if (!response.ok) {
+        document.documentElement?.setAttribute("data-sitecare-reviews-status", "config-rejected");
+        return;
+      }
+      const config = await response.json();
+      if (!config?.ok || !config.enabled) {
+        document.documentElement?.setAttribute("data-sitecare-reviews-status", "disabled");
+        return;
+      }
+      render(config);
+    } catch {
+      document.documentElement?.setAttribute("data-sitecare-reviews-status", "config-unavailable");
+    }
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", load, { once: true });
+  else load();
+  window.addEventListener("load", load, { once: true });
+}
+
+export function reviewsWidgetJavascript() {
+  return `(()=>{"use strict";const __name=(target,value)=>Object.defineProperty(target,"name",{value,configurable:true});const escapeReviewsHtml=${escapeReviewsHtml.toString()};const reviewsStars=${reviewsStars.toString()};const renderClassicReviewsTemplate=${renderClassicReviewsTemplate.toString()};const renderSpotlightReviewsTemplate=${renderSpotlightReviewsTemplate.toString()};const renderRowsReviewsTemplate=${renderRowsReviewsTemplate.toString()};const renderSourcesReviewsTemplate=${renderSourcesReviewsTemplate.toString()};const TEMPLATE_RENDERERS={classic:renderClassicReviewsTemplate,spotlight:renderSpotlightReviewsTemplate,rows:renderRowsReviewsTemplate,sources:renderSourcesReviewsTemplate};const templateStyles=${JSON.stringify(TEMPLATE_STYLES)};const renderTemplate=(templateKey,widget)=>(TEMPLATE_RENDERERS[templateKey]||TEMPLATE_RENDERERS.classic)(widget);(${sitecareReviewsRuntime.toString()})(renderTemplate,templateStyles)})();`;
 }
 
 export function dayKey(date = new Date()) {

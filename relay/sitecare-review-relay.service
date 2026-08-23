@@ -1,0 +1,18 @@
+[Unit]
+Description=SiteCare review-source relay
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/sitecare-review-relay
+EnvironmentFile=/opt/sitecare-review-relay/.env
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+User=sitecare-relay
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -29,6 +29,8 @@ import {
   passwordMatches,
   randomToken,
   readCookie,
+  REVIEW_TEMPLATE_KEYS,
+  reviewsWidgetJavascript,
   roleAllows,
   safeMessageText,
   safeText,
@@ -51,6 +53,8 @@ import {
   sendSupportRequestEmail
 } from "./platform-email.js";
 import { checkPlatformSite, inspectSite, runDuePlatformChecks, runDueHealthScans, runDueDigests, runDueContentAudits, runDueDomainChecks, runDueMonitorRollups, recordHealthCheck, scanSiteInventory, siteReport } from "./platform-monitor.js";
+import { runDueReviewSyncs, syncReviewWidget } from "./platform-reviews.js";
+import { REVIEW_SOURCES, reviewSourceCatalog } from "./review-sources/index.js";
 import { prepareSiteChange, phoneValueQuestion } from "./platform-assistant.js";
 import { generateSiteInsight } from "./platform-insights.js";
 import { generateLeadReplyDraft, generateLeadSummary } from "./platform-crm.js";
@@ -650,10 +654,11 @@ async function accountDetails(env, account, role, platformRole = "user", { inclu
   const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const [sitesResult, membersResult, incidentsResult, usage, counts, receiptsResult, activityResult, notesResult, billingEventsResult, featureResult, leadsResult, invitesResult, accessRequestsResult] = await Promise.all([
     env.GATEWAY_DB.prepare(
-      "SELECT s.*, COALESCE(d.enabled, 0) AS telegram_enabled, rs.yandex_widget_url, rs.dgis_widget_url, ld.summary_text AS digest_summary, ld.created_at AS digest_created_at, ym.connected_at AS yandex_metrica_connected_at " +
+      "SELECT s.*, COALESCE(d.enabled, 0) AS telegram_enabled, ld.summary_text AS digest_summary, ld.created_at AS digest_created_at, ym.connected_at AS yandex_metrica_connected_at, " +
+      "(SELECT COUNT(*) FROM platform_review_widgets w WHERE w.site_id = s.site_id AND w.enabled = 1) AS reviews_widget_count, " +
+      "(SELECT MIN(CASE w.sync_status WHEN 'failed' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END) FROM platform_review_widgets w WHERE w.site_id = s.site_id AND w.enabled = 1) AS reviews_worst_status_rank " +
       "FROM platform_sites s " +
       "LEFT JOIN telegram_destinations d ON d.site_id = s.site_id " +
-      "LEFT JOIN platform_review_sources rs ON rs.site_id = s.site_id " +
       "LEFT JOIN (SELECT site_id, summary_text, created_at FROM platform_digests d1 WHERE created_at = (SELECT MAX(created_at) FROM platform_digests d2 WHERE d2.site_id = d1.site_id)) ld ON ld.site_id = s.site_id " +
       "LEFT JOIN yandex_metrica_connections ym ON ym.site_id = s.site_id " +
       "WHERE s.account_id = ? AND s.status != 'archived' ORDER BY s.created_at"
@@ -1104,6 +1109,7 @@ async function integration(request, env, user, siteId) {
   return json({
     ok: true,
     loaderCode: urls.loaderCode,
+    reviewsWidgetCode: urls.reviewsWidgetCode,
     webhookConfigured: Boolean(site.webhook_token_hash),
     webhookVerified: Boolean(site.webhook_verified_at) || !Number(site.form_required),
     testLeadReceived: Boolean(site.form_verified_at) || !Number(site.form_required),
@@ -2021,38 +2027,164 @@ async function siteOverrides(request, env, user, siteId) {
   return json({ ok: true, enabled: Boolean(enabled), version });
 }
 
-// Unlike validateTargetUrl (used for the site the Worker itself fetches),
-// this only ever ends up as an <iframe src> the client's browser loads, so
-// the query string (widget tokens/config) must survive intact.
-function reviewWidgetUrl(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return null;
-  let url;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("Укажите полную ссылку src из кода виджета.");
-  }
-  if (url.protocol !== "https:" || !url.hostname) throw new Error("Ссылка на виджет должна быть полным HTTPS-адресом.");
-  return url.href;
+function reviewWidgetRow(row) {
+  return {
+    widgetId: row.widget_id,
+    serviceKey: row.service_key,
+    serviceLabel: REVIEW_SOURCES[row.service_key]?.label || row.service_key,
+    renderMode: REVIEW_SOURCES[row.service_key]?.renderMode === "iframe" ? "iframe" : "reviews",
+    businessIdentifier: row.business_identifier,
+    designTemplateKey: row.design_template_key,
+    enabled: Boolean(row.enabled),
+    syncStatus: row.sync_status,
+    lastSyncAt: row.last_sync_at,
+    lastSyncError: row.last_sync_error,
+    reviewCount: Number(row.review_count) || 0,
+    averageRating: row.average_rating === null || row.average_rating === undefined ? null : Number(row.average_rating)
+  };
 }
 
-async function updateReviewSources(request, env, user, siteId) {
+async function reviewWidgetsList(env, user, siteId) {
+  await siteAccess(env, user, siteId, "viewer");
+  const rows = await env.GATEWAY_DB.prepare("SELECT * FROM platform_review_widgets WHERE site_id = ? ORDER BY created_at").bind(siteId).all();
+  const widgets = rows?.results || [];
+  const previewRows = widgets.length ? await env.GATEWAY_DB.prepare(
+    `SELECT widget_id, author_name, rating, review_text, reviewed_at FROM platform_reviews WHERE widget_id IN (${widgets.map(() => "?").join(",")}) AND hidden = 0 ORDER BY reviewed_at DESC LIMIT 60`
+  ).bind(...widgets.map((row) => row.widget_id)).all() : { results: [] };
+  const previewsByWidget = new Map();
+  for (const row of previewRows?.results || []) {
+    const list = previewsByWidget.get(row.widget_id) || [];
+    if (list.length < 3) {
+      list.push({ authorName: row.author_name, rating: row.rating === null || row.rating === undefined ? null : Number(row.rating), text: row.review_text, reviewedAt: row.reviewed_at });
+      previewsByWidget.set(row.widget_id, list);
+    }
+  }
+  return json({
+    ok: true,
+    widgets: widgets.map((row) => ({ ...reviewWidgetRow(row), previewReviews: previewsByWidget.get(row.widget_id) || [] })),
+    catalog: reviewSourceCatalog()
+  });
+}
+
+async function createReviewWidget(request, env, user, siteId) {
   if (user.platform_role !== "operator") fail("Доступ запрещён.", 403, "FORBIDDEN");
   const { site } = await siteAccess(env, user, siteId, "manager");
   const body = await requestJson(request);
-  const current = await env.GATEWAY_DB.prepare(
-    "SELECT yandex_widget_url, dgis_widget_url FROM platform_review_sources WHERE site_id = ?"
-  ).bind(siteId).first();
-  const yandexWidgetUrl = body.yandexWidgetUrl === undefined ? (current?.yandex_widget_url || null) : reviewWidgetUrl(body.yandexWidgetUrl);
-  const dgisWidgetUrl = body.dgisWidgetUrl === undefined ? (current?.dgis_widget_url || null) : reviewWidgetUrl(body.dgisWidgetUrl);
+  const adapter = REVIEW_SOURCES[String(body.serviceKey || "")];
+  if (!adapter) fail("Неизвестный сервис отзывов.");
+  const businessIdentifier = adapter.normalizeIdentifier(body.businessIdentifier);
+  const designTemplateKey = REVIEW_TEMPLATE_KEYS.includes(body.designTemplateKey) ? body.designTemplateKey : "classic";
+  const widgetId = newId("rw", adapter.key);
   const now = new Date().toISOString();
+  if (!site.reviews_widget_key) {
+    await env.GATEWAY_DB.prepare("UPDATE platform_sites SET reviews_widget_key = ? WHERE site_id = ? AND reviews_widget_key IS NULL")
+      .bind(randomToken(24), siteId).run();
+  }
+  try {
+    await env.GATEWAY_DB.prepare(
+      "INSERT INTO platform_review_widgets (widget_id, site_id, service_key, business_identifier, design_template_key, enabled, sync_status, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, 1, 'pending', ?, ?, ?, ?)"
+    ).bind(widgetId, siteId, adapter.key, businessIdentifier, designTemplateKey, now, user.user_id, now, user.user_id).run();
+  } catch (error) {
+    if (String(error?.message || "").toLocaleLowerCase("en-US").includes("unique")) fail("Такой источник уже подключён для этого сайта.", 409, "DUPLICATE");
+    throw error;
+  }
+  const widget = await env.GATEWAY_DB.prepare("SELECT * FROM platform_review_widgets WHERE widget_id = ?").bind(widgetId).first();
+  let syncError = "";
+  try {
+    await syncReviewWidget(env, widget);
+  } catch (error) {
+    syncError = error?.message || "Не удалось получить отзывы.";
+  }
+  const refreshed = await env.GATEWAY_DB.prepare("SELECT * FROM platform_review_widgets WHERE widget_id = ?").bind(widgetId).first();
+  await audit(env, user, site.account_id, "site.reviews.add", "site", siteId, `${adapter.label}: ${businessIdentifier}`);
+  return json({ ok: true, widget: reviewWidgetRow(refreshed), syncError });
+}
+
+async function updateReviewWidget(request, env, user, siteId, widgetId) {
+  if (user.platform_role !== "operator") fail("Доступ запрещён.", 403, "FORBIDDEN");
+  const { site } = await siteAccess(env, user, siteId, "manager");
+  const existing = await env.GATEWAY_DB.prepare("SELECT * FROM platform_review_widgets WHERE widget_id = ? AND site_id = ?").bind(widgetId, siteId).first();
+  if (!existing) fail("Источник не найден.", 404, "NOT_FOUND");
+  const body = await requestJson(request);
+  const now = new Date().toISOString();
+  const enabled = body.enabled === undefined ? Number(existing.enabled) : (body.enabled ? 1 : 0);
+  const designTemplateKey = REVIEW_TEMPLATE_KEYS.includes(body.designTemplateKey) ? body.designTemplateKey : existing.design_template_key;
+  let businessIdentifier = existing.business_identifier;
+  if (body.businessIdentifier !== undefined) {
+    const adapter = REVIEW_SOURCES[existing.service_key];
+    if (!adapter) fail("Этот источник больше не поддерживается.");
+    businessIdentifier = adapter.normalizeIdentifier(body.businessIdentifier);
+  }
   await env.GATEWAY_DB.prepare(
-    "INSERT INTO platform_review_sources (site_id, yandex_widget_url, dgis_widget_url, updated_at, updated_by) VALUES (?, ?, ?, ?, ?) " +
-    "ON CONFLICT(site_id) DO UPDATE SET yandex_widget_url = excluded.yandex_widget_url, dgis_widget_url = excluded.dgis_widget_url, updated_at = excluded.updated_at, updated_by = excluded.updated_by"
-  ).bind(siteId, yandexWidgetUrl, dgisWidgetUrl, now, user.user_id).run();
-  await audit(env, user, site.account_id, "site.reviews.update", "site", siteId, [yandexWidgetUrl && "Яндекс", dgisWidgetUrl && "2ГИС"].filter(Boolean).join(", ") || "очищено");
-  return json({ ok: true, yandexWidgetUrl, dgisWidgetUrl });
+    "UPDATE platform_review_widgets SET business_identifier = ?, design_template_key = ?, enabled = ?, updated_at = ?, updated_by = ? WHERE widget_id = ?"
+  ).bind(businessIdentifier, designTemplateKey, enabled, now, user.user_id, widgetId).run();
+  const refreshed = await env.GATEWAY_DB.prepare("SELECT * FROM platform_review_widgets WHERE widget_id = ?").bind(widgetId).first();
+  await audit(env, user, site.account_id, "site.reviews.update", "site", siteId, widgetId);
+  return json({ ok: true, widget: reviewWidgetRow(refreshed) });
+}
+
+async function deleteReviewWidget(env, user, siteId, widgetId) {
+  if (user.platform_role !== "operator") fail("Доступ запрещён.", 403, "FORBIDDEN");
+  const { site } = await siteAccess(env, user, siteId, "manager");
+  const existing = await env.GATEWAY_DB.prepare("SELECT widget_id FROM platform_review_widgets WHERE widget_id = ? AND site_id = ?").bind(widgetId, siteId).first();
+  if (!existing) fail("Источник не найден.", 404, "NOT_FOUND");
+  await env.GATEWAY_DB.prepare("DELETE FROM platform_review_widgets WHERE widget_id = ?").bind(widgetId).run();
+  await audit(env, user, site.account_id, "site.reviews.remove", "site", siteId, widgetId);
+  return json({ ok: true });
+}
+
+async function publicReviewsWidget(request, env, siteId) {
+  if (!SITE_ID_PATTERN.test(siteId)) fail("Виджет не найден.", 404, "NOT_FOUND");
+  const site = await env.GATEWAY_DB.prepare(
+    "SELECT s.site_id, s.target_origin, s.status, s.reviews_widget_key, a.status AS account_status FROM platform_sites s JOIN platform_accounts a ON a.account_id = s.account_id WHERE s.site_id = ?"
+  ).bind(siteId).first();
+  const key = new URL(request.url).searchParams.get("key") || "";
+  if (!site || !site.reviews_widget_key || !constantTimeEqual(key, site.reviews_widget_key)) fail("Виджет не найден.", 404, "NOT_FOUND");
+  const origin = request.headers.get("Origin") || "";
+  if (origin && origin !== site.target_origin) fail("Страница не входит в подключённый сайт.", 403, "ORIGIN_REJECTED");
+  const enabled = site.status === "active" && site.account_status === "active";
+  const widgets = enabled ? await env.GATEWAY_DB.prepare(
+    "SELECT widget_id, service_key, business_identifier, design_template_key, review_count, average_rating, last_sync_at FROM platform_review_widgets WHERE site_id = ? AND enabled = 1 AND sync_status = 'ok' ORDER BY updated_at"
+  ).bind(siteId).all() : { results: [] };
+  const widgetRows = widgets?.results || [];
+  const scrapedRows = widgetRows.filter((row) => REVIEW_SOURCES[row.service_key]?.renderMode !== "iframe");
+  const reviewRows = scrapedRows.length ? await env.GATEWAY_DB.prepare(
+    `SELECT widget_id, author_name, author_avatar_url, rating, review_text, reviewed_at FROM platform_reviews WHERE widget_id IN (${scrapedRows.map(() => "?").join(",")}) AND hidden = 0 ORDER BY reviewed_at DESC LIMIT 200`
+  ).bind(...scrapedRows.map((row) => row.widget_id)).all() : { results: [] };
+  const reviewsByWidget = new Map();
+  for (const row of reviewRows?.results || []) {
+    const list = reviewsByWidget.get(row.widget_id) || [];
+    list.push({
+      authorName: row.author_name,
+      authorAvatarUrl: row.author_avatar_url,
+      rating: row.rating === null || row.rating === undefined ? null : Number(row.rating),
+      text: row.review_text,
+      reviewedAt: row.reviewed_at
+    });
+    reviewsByWidget.set(row.widget_id, list);
+  }
+  const version = widgetRows.map((row) => row.last_sync_at).filter(Boolean).sort().at(-1) || "0";
+  return json({
+    ok: true,
+    siteId,
+    origin: site.target_origin,
+    enabled,
+    version,
+    widgets: widgetRows.map((row) => {
+      const isEmbed = REVIEW_SOURCES[row.service_key]?.renderMode === "iframe";
+      return {
+        widgetId: row.widget_id,
+        serviceKey: row.service_key,
+        serviceLabel: REVIEW_SOURCES[row.service_key]?.label || row.service_key,
+        designTemplateKey: row.design_template_key,
+        renderMode: isEmbed ? "iframe" : "reviews",
+        embedUrl: isEmbed ? row.business_identifier : null,
+        reviewCount: Number(row.review_count) || 0,
+        averageRating: row.average_rating === null || row.average_rating === undefined ? null : Number(row.average_rating),
+        reviews: reviewsByWidget.get(row.widget_id) || []
+      };
+    })
+  }, 200, origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin", "Cross-Origin-Resource-Policy": "cross-origin" } : {});
 }
 
 async function rollbackOverrides(request, env, user, siteId) {
@@ -3105,6 +3237,7 @@ export async function handlePlatformRoute(request, env, path) {
     return html(resetPasswordHtml(nonce, OPAQUE_PATTERN.test(token) ? token : ""), nonce);
   }
   if (request.method === "GET" && path === "/sitecare-loader.js") return javascript(loaderJavascript());
+  if (request.method === "GET" && path === "/sitecare-reviews-widget.js") return javascript(reviewsWidgetJavascript());
 
   if (request.method === "GET" && path === "/v1/admin/platform/status") {
     requireGatewayAdmin(request, env);
@@ -3123,6 +3256,8 @@ export async function handlePlatformRoute(request, env, path) {
   if (request.method === "POST" && match) return formWebhook(request, env, match[1]);
   match = /^\/v1\/public\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/config$/u.exec(path);
   if (request.method === "GET" && match) return publicConfig(request, env, match[1]);
+  match = /^\/v1\/public\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/reviews$/u.exec(path);
+  if (request.method === "GET" && match) return publicReviewsWidget(request, env, match[1]);
   match = /^\/v1\/public\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/applied$/u.exec(path);
   if ((request.method === "POST" || request.method === "OPTIONS") && match) return runtimeApplied(request, env, match[1]);
   match = /^\/v1\/public\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/select$/u.exec(path);
@@ -3224,8 +3359,16 @@ export async function handlePlatformRoute(request, env, path) {
   if ((request.method === "GET" || request.method === "PATCH") && match) return siteOverrides(request, env, user, match[1]);
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/overrides\/rollback$/u.exec(path);
   if (request.method === "POST" && match) return rollbackOverrides(request, env, user, match[1]);
-  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/review-sources$/u.exec(path);
-  if (request.method === "POST" && match) return updateReviewSources(request, env, user, match[1]);
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/review-widgets$/u.exec(path);
+  if (match) {
+    if (request.method === "GET") return reviewWidgetsList(env, user, match[1]);
+    if (request.method === "POST") return createReviewWidget(request, env, user, match[1]);
+  }
+  match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/review-widgets\/(rw_[a-z0-9_-]{4,100})$/u.exec(path);
+  if (match) {
+    if (request.method === "PATCH") return updateReviewWidget(request, env, user, match[1], match[2]);
+    if (request.method === "DELETE") return deleteReviewWidget(env, user, match[1], match[2]);
+  }
   match = /^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/(conversation|conversation\/quick|support)$/u.exec(path);
   if (match) {
     if (request.method === "GET" && match[2] === "conversation") return conversationState(env, user, match[1]);
@@ -3257,13 +3400,14 @@ export async function handlePlatformRoute(request, env, path) {
 }
 
 export async function scheduledPlatformChecks(env) {
-  const [monitor, health, digests, contentAudits, domainChecks, monitorRollups] = await Promise.allSettled([
+  const [monitor, health, digests, contentAudits, domainChecks, monitorRollups, reviewSyncs] = await Promise.allSettled([
     runDuePlatformChecks(env),
     runDueHealthScans(env),
     runDueDigests(env),
     runDueContentAudits(env),
     runDueDomainChecks(env),
-    runDueMonitorRollups(env)
+    runDueMonitorRollups(env),
+    runDueReviewSyncs(env)
   ]);
   return {
     monitor: monitor.status === "fulfilled" ? monitor.value : { error: true },
@@ -3271,7 +3415,8 @@ export async function scheduledPlatformChecks(env) {
     digests: digests.status === "fulfilled" ? digests.value : { error: true },
     contentAudits: contentAudits.status === "fulfilled" ? contentAudits.value : { error: true },
     domainChecks: domainChecks.status === "fulfilled" ? domainChecks.value : { error: true },
-    monitorRollups: monitorRollups.status === "fulfilled" ? monitorRollups.value : { error: true }
+    monitorRollups: monitorRollups.status === "fulfilled" ? monitorRollups.value : { error: true },
+    reviewSyncs: reviewSyncs.status === "fulfilled" ? reviewSyncs.value : { error: true }
   };
 }
 
