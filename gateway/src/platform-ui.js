@@ -237,6 +237,26 @@ export function platformHtml(nonce) {
     .review-preview-card b{display:block}
     .review-preview-stars{display:block;margin-top:2px;color:#ffb81c;font-size:13px;letter-spacing:1px}
     .review-preview-card p{margin:8px 0 0;color:var(--muted);font-size:14px;white-space:pre-wrap}
+    /* 7.3: live design-template preview inside the add/edit source dialog */
+    #reviewWidgetPreview{margin-top:8px;padding:16px;border-radius:12px;background:#f7f7fb}
+    .sc-preview{font-size:14px;line-height:1.5;color:#171b25}
+    .sc-preview-stars{color:#ffb81c;font-size:13px;letter-spacing:1px}
+    .sc-preview-row-head{display:flex;align-items:center;gap:8px}
+    .sc-preview-classic{display:grid;gap:10px}
+    .sc-preview-classic article{border:1px solid #e4e6ef;border-radius:12px;padding:12px 14px;background:#fff}
+    .sc-preview-classic article p{margin:6px 0 0;color:#4b5160}
+    .sc-preview-spotlight{text-align:center;background:#fff;border:1px solid #e4e6ef;border-radius:12px;padding:18px 16px}
+    .sc-preview-spotlight blockquote{margin:0;font-size:16px;line-height:1.5}
+    .sc-preview-byline{margin-top:10px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;color:#6b7280}
+    .sc-preview-byline b{color:#171b25;font-weight:600}
+    .sc-preview-rows{background:#fff;border:1px solid #e4e6ef;border-radius:12px;overflow:hidden}
+    .sc-preview-row{padding:10px 14px;border-bottom:1px solid #e4e6ef}.sc-preview-row:last-child{border-bottom:0}
+    .sc-preview-row p{margin:4px 0 0;color:#4b5160}
+    .sc-preview-sources{display:grid;gap:8px}
+    .sc-preview-source-row{padding:12px 14px;border:1px solid #e4e6ef;border-radius:12px;background:#fff}
+    .sc-preview-source-row p{margin:6px 0 8px}
+    .sc-preview-source-meta{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .sc-preview-badge{font-size:12px;font-weight:600;color:#5140bd;background:#f0edff;padding:2px 9px;border-radius:999px}
   </style>
 </head>
 <body>
@@ -465,6 +485,22 @@ export function platformHtml(nonce) {
     function renderOperatorClients(){const list=clients(),selected=list.find(a=>a.account_id===operatorClientId);if(selected){operatorClientDetail(selected);return}$('view').innerHTML=pageHead('Оператор SiteCare','Клиенты','Поиск, подключение и доступ каждого клиента.','<button class="primary" data-action="new-client">Новый клиент</button>')+'<section class="card"><div class="card-head"><div><h2>Все клиенты</h2><p>'+list.length+' кабинетов</p></div><div class="field" style="margin:0"><label class="hidden" for="clientSearch">Поиск</label><input id="clientSearch" placeholder="Найти клиента или почту"></div></div>'+clientTable(list)+'</section>'}
     const reviewSyncStatusLabel=status=>status==='ok'?'Работает':status==='failed'?'Ошибка':'Подключается';
     const reviewSyncStatusKind=status=>status==='ok'?'ok':status==='failed'?'bad':'warn';
+    const PREVIEW_SAMPLE_REVIEWS=[{authorName:'Мария',rating:5,text:'Отличное место, всем рекомендую! Персонал внимательный, атмосфера уютная.'},{authorName:'Игорь',rating:4,text:'Хорошее обслуживание, но пришлось немного подождать.'},{authorName:'Анна',rating:5,text:'Обращаюсь уже не первый раз — всегда всё на высшем уровне.'}];
+    function previewStars(rating){const value=Math.max(0,Math.min(5,Math.round(Number(rating)||0)));return'★★★★★☆☆☆☆☆'.slice(5-value,10-value)}
+    function reviewWidgetPreviewHtml(templateKey,reviews,label){
+      const list=(reviews&&reviews.length?reviews:PREVIEW_SAMPLE_REVIEWS).slice(0,3);
+      if(templateKey==='spotlight'){
+        const r=list[0];
+        return'<div class="sc-preview sc-preview-spotlight"><blockquote>«'+h(r.text)+'»</blockquote><div class="sc-preview-byline"><b>'+h(r.authorName)+'</b>'+(label?'<span>— '+h(label)+'</span>':'')+'<span class="sc-preview-stars">'+previewStars(r.rating)+'</span></div></div>'
+      }
+      if(templateKey==='rows'){
+        return'<div class="sc-preview sc-preview-rows">'+list.map(r=>'<div class="sc-preview-row"><div class="sc-preview-row-head"><b>'+h(r.authorName)+'</b><span class="sc-preview-stars">'+previewStars(r.rating)+'</span></div><p>'+h(r.text)+'</p></div>').join('')+'</div>'
+      }
+      if(templateKey==='sources'){
+        return'<div class="sc-preview sc-preview-sources">'+list.map(r=>'<div class="sc-preview-source-row"><span class="sc-preview-stars">'+previewStars(r.rating)+'</span><p>'+h(r.text)+'</p><div class="sc-preview-source-meta"><b>'+h(r.authorName)+'</b>'+(label?'<span class="sc-preview-badge">'+h(label)+'</span>':'')+'</div></div>').join('')+'</div>'
+      }
+      return'<div class="sc-preview sc-preview-classic">'+list.map(r=>'<article><div class="sc-preview-row-head"><b>'+h(r.authorName)+'</b><span class="sc-preview-stars">'+previewStars(r.rating)+'</span></div><p>'+h(r.text)+'</p></article>').join('')+'</div>'
+    }
     function reviewWidgetStatusText(w){
       if(w.renderMode==='iframe')return w.syncStatus==='ok'?'Официальный виджет — обновляется на стороне сервиса':w.syncStatus==='failed'?'Не удалось подключить виджет':'Подключаем виджет…';
       return w.reviewCount?w.reviewCount+' отзывов'+(w.averageRating!=null?' · рейтинг '+w.averageRating.toFixed(1):''):'Синхронизация…'
@@ -1048,9 +1084,16 @@ export function platformHtml(nonce) {
       const options=catalog.map(c=>'<option value="'+h(c.key)+'" data-hint="'+h(c.identifierHint)+'" '+(c.key===selected.key?'selected':'')+'>'+h(c.label)+'</option>').join('');
       const templates=[['classic','Классический список'],['spotlight','Один отзыв'],['rows','Строки'],['sources','Источники на первом плане']];
       const templateOptions=templates.map(([value,label])=>'<option value="'+value+'" '+((existing?.designTemplateKey||'classic')===value?'selected':'')+'>'+h(label)+'</option>').join('');
-      showDialog(existing?'Изменить источник':'Добавить источник','<form id="reviewWidgetForm">'+(existing?'<p class="muted small">Сервис: <b>'+h(existing.serviceLabel)+'</b></p>':'<div class="field"><label for="reviewWidgetService">Сервис</label><select id="reviewWidgetService">'+options+'</select></div>')+'<div class="field"><label for="reviewWidgetIdentifier">Ссылка на организацию</label><input id="reviewWidgetIdentifier" required placeholder="'+h(selected.identifierHint||'')+'" value="'+h(existing?.businessIdentifier||'')+'"></div><div class="field"><label for="reviewWidgetTemplate">Оформление виджета</label><select id="reviewWidgetTemplate">'+templateOptions+'</select></div><div class="dialog-actions"><button class="primary" type="submit">'+(existing?'Сохранить':'Подключить и синхронизировать')+'</button></div></form>');
+      showDialog(existing?'Изменить источник':'Добавить источник','<form id="reviewWidgetForm">'+(existing?'<p class="muted small">Сервис: <b>'+h(existing.serviceLabel)+'</b></p>':'<div class="field"><label for="reviewWidgetService">Сервис</label><select id="reviewWidgetService">'+options+'</select></div>')+'<div class="field"><label for="reviewWidgetIdentifier">Ссылка на организацию</label><input id="reviewWidgetIdentifier" required placeholder="'+h(selected.identifierHint||'')+'" value="'+h(existing?.businessIdentifier||'')+'"></div><div class="field"><label for="reviewWidgetTemplate">Оформление виджета</label><select id="reviewWidgetTemplate">'+templateOptions+'</select></div><div class="dialog-actions"><button class="primary" type="submit">'+(existing?'Сохранить':'Подключить и синхронизировать')+'</button></div></form><div class="field"><label>Предпросмотр'+(existing?.previewReviews?.length?'':' <span class="muted small">(на примере — реальные отзывы появятся после синхронизации)</span>')+'</label><div id="reviewWidgetPreview"></div></div>');
       const serviceSelect=$('reviewWidgetService');
-      if(serviceSelect)serviceSelect.onchange=()=>{$('reviewWidgetIdentifier').placeholder=serviceSelect.selectedOptions[0]?.dataset.hint||''};
+      const renderPreview=()=>{
+        const templateKey=$('reviewWidgetTemplate').value;
+        const label=existing?existing.serviceLabel:(catalog.find(c=>c.key===serviceSelect?.value)||selected).label;
+        $('reviewWidgetPreview').innerHTML=reviewWidgetPreviewHtml(templateKey,existing?.previewReviews,label);
+      };
+      if(serviceSelect)serviceSelect.onchange=()=>{$('reviewWidgetIdentifier').placeholder=serviceSelect.selectedOptions[0]?.dataset.hint||'';renderPreview()};
+      $('reviewWidgetTemplate').onchange=renderPreview;
+      renderPreview();
       $('reviewWidgetForm').onsubmit=async e=>{
         e.preventDefault();const b=e.submitter;
         try{
