@@ -41,12 +41,6 @@ jobs:
         working-directory: gateway
         run: npx wrangler d1 migrations apply sitecare-telegram-gateway-db --remote
 
-      - name: Set gateway secrets
-        working-directory: gateway
-        run: |
-          echo "${{ secrets.OPENAI_API_KEY }}" | npx wrangler secret put OPENAI_API_KEY
-          echo "${{ secrets.TELEGRAM_BOT_TOKEN }}" | npx wrangler secret put TELEGRAM_BOT_TOKEN
-
       - name: Deploy main worker
         run: npx wrangler deploy
 
