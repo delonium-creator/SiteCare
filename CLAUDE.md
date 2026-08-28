@@ -2,6 +2,8 @@
 
 This repository is developed collaboratively by the user, ChatGPT and Claude Code through GitHub Issues and Pull Requests.
 
+Claude is the implementation engineer for focused tasks. ChatGPT/Codex is the lead engineer and integration owner. The user is the product owner. The complete division of responsibilities and task-ownership protocol in `docs/AI-WORKFLOW.md` is mandatory.
+
 ## Source of truth
 
 Read these before changing product behavior:
@@ -27,15 +29,19 @@ If documents conflict, prefer the most specific and most recently accepted decis
 
 ## Required workflow
 
-1. Never make feature work directly on `main`.
-2. Work from a dedicated branch for one task.
-3. Keep each PR focused on one problem.
-4. Before editing, inspect the relevant code and tests rather than guessing from file names.
-5. Preserve unrelated behavior.
-6. For behavior changes, add or update tests when practical.
-7. Run `npm test` at minimum. Prefer `npm run check` when the environment supports it.
-8. Do not deploy production resources from a development task unless the issue explicitly asks for deployment.
-9. Do not merge your own PR. Leave it for review.
+1. Fetch the latest GitHub state and inspect the Issue/PR before editing.
+2. Never make feature work directly on `main`.
+3. Work from a dedicated branch for one task that is explicitly assigned to Claude.
+4. Do not start or continue if Codex owns the same task or overlapping files; report the conflict in the Issue.
+5. Keep each PR focused on one problem.
+6. Before editing, inspect the relevant code and tests rather than guessing from file names.
+7. Preserve unrelated behavior.
+8. For behavior changes, add or update tests when practical.
+9. Run `npm test` at minimum. Prefer `npm run check` when the environment supports it.
+10. Do not deploy production resources from a development task unless the issue explicitly asks for deployment.
+11. Do not merge your own PR. Hand it to Codex for review.
+
+For UI tasks, do not invent a broad redesign beyond the Issue. Provide screenshots or precise reproduction notes and list every viewport/state actually checked. If the user requests a rollback, restore the accepted version without adding replacement design changes.
 
 ## Safety rules
 
