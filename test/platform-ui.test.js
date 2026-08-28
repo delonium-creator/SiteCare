@@ -44,7 +44,7 @@ test("combined client workspace and support shell keep one accessible control st
   assert.doesNotMatch(html, /\+manualMarkup\(\)/u);
   assert.match(html, /Редактор поддержки/u);
   assert.match(html, /selected&&details/u);
-  assert.match(html, /AI-помощник/iu);
+  assert.match(html, /Контекстная помощь SiteCare/iu);
   assert.doesNotMatch(html, /оператор/iu);
   assert.match(html, /Подключения/u);
   assert.match(html, /Оплата/u);
@@ -54,7 +54,8 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /@media\(max-width:620px\)/u);
   assert.match(html, /prefers-reduced-motion/u);
   assert.match(html, /input:not\(\[type="checkbox"\]\)/u);
-  assert.match(html, /sitecare-assistant\.png/u);
+  assert.match(html, /sitecare-assistant-mark/u);
+  assert.doesNotMatch(html, /sitecare-assistant\.png/u);
   assert.match(html, /wordmark-care">CARE/u);
   assert.match(html, /changePromptV45/u);
   assert.match(html, /Найдено несколько совпадений/u);
@@ -92,7 +93,7 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /Быстрый обзор/u);
   assert.match(html, /Заявки сегодня/u);
   assert.doesNotMatch(html, /banner home-status/u);
-  assert.match(html, /class="grid stat-tiles"/u);
+  assert.match(html, /class="grid stat-tiles/u);
   assert.match(html, /class="stat-sparkline"/u);
   assert.match(html, /quick-action-card/u);
   assert.match(html, /leads-today-chart/u);
@@ -108,7 +109,7 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /data-action="edit-note"/u);
   assert.match(html, /data-action="delete-note"/u);
   assert.equal((html.match(/<button class="danger" data-action="logout">/gu) || []).length, 2, "logout must be reachable from both client settings and the operator system page");
-  assert.match(html, /Проверки и понятные причины — открытые вопросы решает помощник в чате справа/u);
+  assert.match(html, /Проверка опубликованных страниц/u);
   assert.match(html, /data-feature="reviews"/u);
   assert.match(html, /Посмотреть как клиент/u);
   assert.match(html, /прокрутите <b>в самый конец<\/b>/u);
@@ -128,9 +129,9 @@ test("combined client workspace and support shell keep one accessible control st
   assert.match(html, /Код SiteCare не найден/u);
   assert.match(html, /Проверьте перед применением/u);
   assert.match(html, /class="phone-scope-note"/u);
-  assert.match(html, /Чем помочь с сайтом/u);
+  assert.match(html, /Помощь по сайту/u);
   assert.match(html, /role="log" aria-live="polite"/u);
-  assert.match(html, /Помощник анализирует сайт/u);
+  assert.match(html, /SiteCare сверяет данны/u);
   assert.match(html, /Shift\+Enter — новая строка/u);
   assert.match(html, /Передать задачу специалисту/u);
   assert.match(html, /Никакая платная работа не начнётся/u);
@@ -139,12 +140,15 @@ test("combined client workspace and support shell keep one accessible control st
   assert.doesNotMatch(html, /Индекс здоровья/u);
   assert.match(html, /Запустить проверку/u);
   assert.match(html, /data-action="run-diagnostics"/u);
-  assert.match(html, /Найденные проблемы/u);
-  assert.match(html, /Рекомендации помощника/u);
-  assert.match(html, /Сводка проверки/u);
-  assert.match(html, /diagnostics-cta inverted/u);
+  assert.match(html, /Что требует внимания/u);
+  assert.match(html, /Направления проверки/u);
+  assert.match(html, /Одинаковые ошибки на нескольких страницах/u);
+  assert.match(html, /class="diag-hero/u);
+  assert.match(html, /class="diag-categories"/u);
   assert.match(html, /data-action="issue-detail"/u);
   assert.match(html, /workspace-leading"><button id="sidebarToggle"/u);
+  assert.match(html, /id="sidebarScrim" class="sidebar-scrim"/u);
+  assert.match(html, /\.shell\.sidebar-collapsed\{grid-template-columns:0 minmax\(0,1fr\)\}/u);
   assert.doesNotMatch(html, /side-foot"><button id="sidebarToggle"/u);
   assert.doesNotMatch(html, /nav-toolbar"><div class="nav-label">Кабинет<\/div><button id="sidebarToggle"/u);
   assert.match(html, /slice\(0,6\)/u);
