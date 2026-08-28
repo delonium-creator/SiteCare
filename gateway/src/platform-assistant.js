@@ -476,13 +476,11 @@ function issueWord(count) {
 function siteStatusAnswer(siteContext) {
   const status = siteContext?.currentStatus || {};
   const webhookReady = !status.formsRequired || (status.webhookVerified && status.testLeadVerified);
-  const critical = Number(siteContext?.diagnostics?.summary?.high || 0);
   const lines = [
     `${status.pageAvailable ? "✓" : "!"} Сайт ${status.pageAvailable ? "открывается" : "сейчас не открывается"}`,
     `${webhookReady ? "✓" : "!"} ${webhookReady ? "Заявки подключены" : "Приём заявок ещё не настроен"}`,
     `${status.telegramConnected ? "✓" : "!"} Telegram ${status.telegramConnected ? "подключён" : "не подключён"}`
   ];
-  if (critical) lines.push(`! В полной диагностике: ${critical} ${critical === 1 ? "критичный пункт" : "критичных пунктов"}`);
   return `Проверил сайт — вот что нашёл:\n\n${lines.join("\n")}`;
 }
 

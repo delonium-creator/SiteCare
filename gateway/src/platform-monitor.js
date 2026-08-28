@@ -344,32 +344,6 @@ export function categorySeverityCounts(issues, category) {
   return counts;
 }
 
-// The same site-wide defect is often visible on several pages (for example a
-// mixed-content script from the shared header or the same consent omission in
-// every form). Treat it as one finding with several occurrences. This keeps
-// the score and the number shown to the client meaningful without hiding the
-// affected pages from the detailed report.
-export function aggregateDiagnosticIssues(issues) {
-  const groups = new Map();
-  for (const issue of issues || []) {
-    if (!issue) continue;
-    const key = [issue.category, issue.severity, issue.title, issue.recommendation].map((value) => safeText(value, 500)).join("\u0000");
-    const page = safeText(issue.page, 500);
-    const existing = groups.get(key);
-    if (existing) {
-      existing.occurrenceCount += 1;
-      if (page && !existing.pages.includes(page)) existing.pages.push(page);
-      continue;
-    }
-    groups.set(key, {
-      ...issue,
-      occurrenceCount: 1,
-      pages: page ? [page] : []
-    });
-  }
-  return [...groups.values()];
-}
-
 export function diagnosePage(html, pageUrl, observation = {}) {
   const source = String(html || "");
   const url = new URL(validateTargetUrl(pageUrl));
@@ -691,14 +665,12 @@ export async function scanSiteInventory(site, fetchImpl = fetch, { maxPages = 40
       confidence: "medium"
     }));
   }
-  const aggregatedIssues = aggregateDiagnosticIssues(diagnosticIssues);
   const severityCounts = { high: 0, medium: 0, low: 0 };
   const categoryCounts = {};
-  for (const issue of aggregatedIssues) {
+  for (const issue of diagnosticIssues) {
     severityCounts[issue.severity] = (severityCounts[issue.severity] || 0) + 1;
     categoryCounts[issue.category] = (categoryCounts[issue.category] || 0) + 1;
   }
-  const healthScore = computeHealthScore(severityCounts);
   return {
     scannedAt: new Date().toISOString(),
     pageCount: pages.length,
@@ -720,21 +692,19 @@ export async function scanSiteInventory(site, fetchImpl = fetch, { maxPages = 40
       pagesFailed: errors.length,
       truncated: queue.length > 0,
       summary: {
-        total: aggregatedIssues.length,
-        occurrences: diagnosticIssues.length,
+        total: diagnosticIssues.length,
         high: severityCounts.high,
         medium: severityCounts.medium,
         low: severityCounts.low,
-        healthScore,
         categories: categoryCounts,
         categoryScores: Object.fromEntries(
           ["seo", "content", "accessibility", "mobile", "security", "performance", "social", "legal", "ai"].map((category) => [
             category,
-            computeHealthScore(categorySeverityCounts(aggregatedIssues, category))
+            computeHealthScore(categorySeverityCounts(diagnosticIssues, category))
           ])
         )
       },
-      issues: aggregatedIssues.slice(0, 120),
+      issues: diagnosticIssues.slice(0, 120),
       pageFacts: pages.map((page) => page.diagnostics?.facts).filter(Boolean).slice(0, 80),
       methodology: "Автоматическая проверка опубликованного HTML и ответа сервера. Она не заменяет ручной аудит аналитики, контента, юзабилити и защищённости серверной инфраструктуры."
     }
@@ -1340,7 +1310,7 @@ export async function siteReport(env, siteId, days = 30) {
   const since = new Date(Date.now() - boundedDays * 24 * 60 * 60 * 1000);
   const sinceDay = since.toISOString().slice(0, 10);
   const todayStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
-  const [rollup, todayRuns, receipts, incidents, site, dailyRollups, todayDaily] = await Promise.all([
+  const [rollup, todayRuns, receipts, incidents, site] = await Promise.all([
     env.GATEWAY_DB.prepare(
       "SELECT SUM(checks) AS checks, SUM(page_ok_count) AS page_ok_count, SUM(checks * avg_latency_ms) AS latency_weighted FROM platform_monitor_daily WHERE site_id = ? AND day >= ?"
     ).bind(siteId, sinceDay).first(),
@@ -1353,31 +1323,11 @@ export async function siteReport(env, siteId, days = 30) {
     env.GATEWAY_DB.prepare(
       "SELECT COUNT(*) AS count FROM platform_incidents WHERE site_id = ? AND opened_at >= ?"
     ).bind(siteId, since.toISOString()).first(),
-    env.GATEWAY_DB.prepare("SELECT domain_expires_at, domain_registrar, domain_check_error FROM platform_sites WHERE site_id = ?").bind(siteId).first(),
-    env.GATEWAY_DB.prepare(
-      "SELECT day, checks, page_ok_count, avg_latency_ms FROM platform_monitor_daily WHERE site_id = ? AND day >= ? ORDER BY day"
-    ).bind(siteId, sinceDay).all(),
-    env.GATEWAY_DB.prepare(
-      "SELECT substr(checked_at, 1, 10) AS day, COUNT(*) AS checks, SUM(page_ok) AS page_ok_count, AVG(latency_ms) AS avg_latency_ms FROM platform_monitor_runs WHERE site_id = ? AND checked_at >= ? GROUP BY substr(checked_at, 1, 10)"
-    ).bind(siteId, todayStart).first()
+    env.GATEWAY_DB.prepare("SELECT domain_expires_at, domain_registrar, domain_check_error FROM platform_sites WHERE site_id = ?").bind(siteId).first()
   ]);
   const checks = Number(rollup?.checks || 0) + Number(todayRuns?.checks || 0);
   const ok = Number(rollup?.page_ok_count || 0) + Number(todayRuns?.page_ok_count || 0);
   const latencySum = Number(rollup?.latency_weighted || 0) + Number(todayRuns?.checks || 0) * Number(todayRuns?.average_latency || 0);
-  const dailyAvailability = [
-    ...((dailyRollups?.results || []).map((row) => ({
-      day: row.day,
-      checks: Number(row.checks || 0),
-      uptimePercent: Number(row.checks || 0) ? Number(((Number(row.page_ok_count || 0) / Number(row.checks)) * 100).toFixed(2)) : null,
-      averageLatencyMs: Math.round(Number(row.avg_latency_ms || 0))
-    }))),
-    ...(Number(todayDaily?.checks || 0) ? [{
-      day: todayDaily.day,
-      checks: Number(todayDaily.checks || 0),
-      uptimePercent: Number(((Number(todayDaily.page_ok_count || 0) / Number(todayDaily.checks || 1)) * 100).toFixed(2)),
-      averageLatencyMs: Math.round(Number(todayDaily.avg_latency_ms || 0))
-    }] : [])
-  ].sort((a, b) => String(a.day).localeCompare(String(b.day)));
   return {
     days: boundedDays,
     checks,
@@ -1385,7 +1335,6 @@ export async function siteReport(env, siteId, days = 30) {
     averageLatencyMs: checks ? Math.round(latencySum / checks) : 0,
     formSignals: Number(receipts?.count || 0),
     incidents: Number(incidents?.count || 0),
-    dailyAvailability,
     domainExpiresAt: site?.domain_expires_at || null,
     domainRegistrar: site?.domain_registrar || null,
     domainCheckError: site?.domain_check_error || null

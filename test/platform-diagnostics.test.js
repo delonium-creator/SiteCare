@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { aggregateDiagnosticIssues, buildContentFields, buildDigestSummary, categorySeverityCounts, checkDomainExpiry, computeHealthScore, detectYandexMetrikaCounter, diagnosePage, extractEditableInventory, scanSiteInventory } from "../gateway/src/platform-monitor.js";
+import { buildContentFields, buildDigestSummary, categorySeverityCounts, checkDomainExpiry, computeHealthScore, detectYandexMetrikaCounter, diagnosePage, extractEditableInventory, scanSiteInventory } from "../gateway/src/platform-monitor.js";
 
 test("diagnostics report observable SEO, accessibility and mixed-content facts", () => {
   const html = `<!doctype html><html><head><title>Коротко</title><meta name="robots" content="noindex"><link rel="canonical" href="https://example.com/"></head><body><h1>Первый</h1><h1>Второй</h1><img src="https://example.com/photo.jpg"><script src="http://old.example.com/widget.js"></script></body></html>`;
@@ -108,18 +108,6 @@ test("categorySeverityCounts isolates one category's severities for the Глав
   assert.deepEqual(categorySeverityCounts(issues, "security"), { high: 0, medium: 0, low: 0 });
   assert.equal(computeHealthScore(categorySeverityCounts(issues, "seo")), 84);
   assert.equal(computeHealthScore(categorySeverityCounts(issues, "security")), 100);
-});
-
-test("site-wide diagnostics count one repeated defect once and retain every affected page", () => {
-  const grouped = aggregateDiagnosticIssues([
-    { issueId: "mixed-content:/", category: "security", severity: "high", title: "Небезопасный ресурс", recommendation: "Переведите ресурс на HTTPS", page: "https://example.com/" },
-    { issueId: "mixed-content:/about", category: "security", severity: "high", title: "Небезопасный ресурс", recommendation: "Переведите ресурс на HTTPS", page: "https://example.com/about" },
-    { issueId: "description:/", category: "seo", severity: "medium", title: "Нет описания", recommendation: "Добавьте description", page: "https://example.com/" }
-  ]);
-  assert.equal(grouped.length, 2);
-  assert.equal(grouped[0].occurrenceCount, 2);
-  assert.deepEqual(grouped[0].pages, ["https://example.com/", "https://example.com/about"]);
-  assert.equal(computeHealthScore({ high: 1, medium: 1 }), 80);
 });
 
 test("a stable week reads as a positive result, not an absence of work", () => {
