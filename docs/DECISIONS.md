@@ -32,6 +32,16 @@ The root Worker, gateway Worker and standalone review relay are separate runtime
 
 `gateway/src/platform-ui.js` is a large, high-risk file. Narrow UI tasks should use targeted changes with regression checks instead of opportunistic large refactors.
 
+## D-006 — Codex coordinates; Claude implements focused tasks
+
+**Status:** accepted
+
+The user is the product owner and final authority for visible product outcomes. Codex is the lead engineer and integration owner: it defines task boundaries, owns architecture and UX consistency, reviews changes, performs browser QA and verifies deployment. Claude Code is the focused implementation engineer: it works only on explicitly assigned Issues in a dedicated branch, adds tests and hands a PR back for review.
+
+Only one agent may own an implementation task at a time. Agents must synchronize with GitHub and check for overlapping work before editing. They must not concurrently modify the same task, branch or affected files. User-visible changes require user acceptance before merge to `main`.
+
+If the user requests a rollback, the last accepted state is restored before any alternative redesign is attempted.
+
 ## Template for new decisions
 
 ```md
