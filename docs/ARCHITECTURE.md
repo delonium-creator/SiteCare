@@ -60,6 +60,14 @@ It uses `GATEWAY_DB` and migrations under `gateway/migrations/`.
 
 `gateway/src/platform-ui.js` is very large and therefore a high-risk integration point. Prefer targeted edits and regression tests over broad rewrites.
 
+### Monitoring and review data
+
+`platform-reporting.js` supplies both availability reports and weekly digest counts. Periods use UTC calendar days, including the current partial day; API responses expose their exact boundaries. Completed daily aggregates take precedence over retained raw checks, with raw checks filling days not yet aggregated. A period with no observations returns `null` for uptime and latency. Request failures leave DNS/TLS status unknown because those layers were not independently measured.
+
+Review widgets distinguish the latest sync attempt from `last_success_at`. A failed refresh keeps the last successful reviews available and exposes `stale` in the public response. Changing the organization atomically clears its reviews and sync metadata and increments `source_revision`; every sync write checks that revision so an earlier request cannot restore the old organization's reviews. An unrecognized source payload is a refresh failure, while an explicitly empty review collection is valid.
+
+These contracts require gateway migration `0028_reliable_observations.sql` before deploying the updated gateway. The migration preserves monitor history and backfills successful review timestamps from existing records. It does not belong in the root Worker's database.
+
 ## 3. Review relay
 
 `relay/` is a standalone Node.js service, intentionally outside both Cloudflare Worker deployments. It exists for review sources that reject Cloudflare/global network origins and require requests from an allowed Russian network origin.

@@ -1,3 +1,4 @@
+import { requireReviewItems } from "./util.js";
 // Т-Банк Отзывы review adapter (tbank.ru/reviews -- T-Bank's own public
 // review platform for businesses, distinct from reviews of the bank
 // itself; relevant here because many small RF businesses already use
@@ -49,7 +50,7 @@ export async function fetchReviews(businessIdentifier, fetchImpl = fetch) {
   const html = await fetchSourcePage(businessIdentifier, fetchImpl);
   const state = extractTramvaiState(html);
   const brandStore = state?.stores?.brand;
-  const items = Array.isArray(brandStore?.feedbacks?.content) ? brandStore.feedbacks.content : [];
+  const items = requireReviewItems(brandStore?.feedbacks?.content);
   const reviews = items.slice(0, 100).map((item) => ({
     externalId: safeText(item?.id, 60) || null,
     authorName: safeText(item?.clientName || item?.clientProfile?.publicName, 120) || "Гость Т-Банк",

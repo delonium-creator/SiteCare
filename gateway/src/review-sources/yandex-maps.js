@@ -1,3 +1,4 @@
+import { requireReviewItems } from "./util.js";
 // Yandex Maps review adapter. No public reviews-read API for third parties
 // (Yandex staff have confirmed this directly, and the Maps API ToS
 // explicitly forbids persistent storage of reviews beyond a temporary
@@ -56,7 +57,7 @@ export async function fetchReviews(businessIdentifier, fetchImpl = fetch) {
   const html = await fetchSourcePage(businessIdentifier, fetchImpl);
   const state = extractStateView(html);
   const item = state?.stack?.[0]?.results?.items?.[0];
-  const items = Array.isArray(item?.reviewResults?.reviews) ? item.reviewResults.reviews : [];
+  const items = requireReviewItems(item?.reviewResults?.reviews);
   const reviews = items.slice(0, 100).map((review) => ({
     externalId: safeText(review?.reviewId, 80) || null,
     authorName: safeText(review?.author?.name, 120) || "Гость Яндекс Карт",

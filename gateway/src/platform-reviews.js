@@ -33,18 +33,21 @@ function resolveFetchImpl(env, adapter, overrideFetchImpl) {
 export async function syncReviewWidget(env, widget, fetchImpl) {
   const adapter = REVIEW_SOURCES[widget.service_key];
   const syncedAt = new Date().toISOString();
+  const revision = Number(widget.source_revision || 1);
+  const guard = [widget.widget_id, widget.business_identifier, revision];
   try {
     if (!adapter) throw new Error("Этот источник отзывов больше не поддерживается.");
     if (adapter.renderMode === "iframe") {
       await env.GATEWAY_DB.prepare(
-        "UPDATE platform_review_widgets SET sync_status = 'ok', last_sync_at = ?, last_sync_error = NULL, next_sync_at = ?, review_count = 0, average_rating = NULL, updated_at = ? WHERE widget_id = ?"
-      ).bind(syncedAt, nextCheckAt(SYNC_EMBED_MINUTES, new Date(syncedAt)), syncedAt, widget.widget_id).run();
+        "UPDATE platform_review_widgets SET sync_status = 'ok', last_sync_at = ?, last_success_at = ?, last_sync_error = NULL, next_sync_at = ?, review_count = 0, average_rating = NULL, updated_at = ? WHERE widget_id = ? AND business_identifier = ? AND source_revision = ?"
+      ).bind(syncedAt, syncedAt, nextCheckAt(SYNC_EMBED_MINUTES, new Date(syncedAt)), syncedAt, ...guard).run();
       return { ok: true, reviewCount: 0 };
     }
     const effectiveFetch = resolveFetchImpl(env, adapter, fetchImpl);
     const { reviews, averageRating, reviewCount } = await adapter.fetchReviews(widget.business_identifier, effectiveFetch);
     const statements = reviews.filter((review) => review.externalId).map((review) => env.GATEWAY_DB.prepare(
-      "INSERT INTO platform_reviews (widget_id, external_review_id, author_name, author_avatar_url, rating, review_text, reviewed_at, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+      "INSERT INTO platform_reviews (widget_id, external_review_id, author_name, author_avatar_url, rating, review_text, reviewed_at, fetched_at) SELECT ?, ?, ?, ?, ?, ?, ?, ? " +
+      "FROM platform_review_widgets WHERE widget_id = ? AND business_identifier = ? AND source_revision = ? " +
       "ON CONFLICT(widget_id, external_review_id) DO UPDATE SET author_name = excluded.author_name, author_avatar_url = excluded.author_avatar_url, rating = excluded.rating, review_text = excluded.review_text, reviewed_at = excluded.reviewed_at, fetched_at = excluded.fetched_at"
     ).bind(
       widget.widget_id,
@@ -54,17 +57,25 @@ export async function syncReviewWidget(env, widget, fetchImpl) {
       review.rating ?? null,
       review.text || "",
       review.reviewedAt || null,
-      syncedAt
+      syncedAt,
+      ...guard
     ));
     for (const group of chunk(statements, 50)) if (group.length) await env.GATEWAY_DB.batch(group);
-    await env.GATEWAY_DB.prepare(
-      "UPDATE platform_review_widgets SET sync_status = 'ok', last_sync_at = ?, last_sync_error = NULL, next_sync_at = ?, review_count = ?, average_rating = ?, updated_at = ? WHERE widget_id = ?"
-    ).bind(syncedAt, nextCheckAt(SYNC_OK_MINUTES, new Date(syncedAt)), Number(reviewCount) || reviews.length, Number.isFinite(averageRating) ? averageRating : null, syncedAt, widget.widget_id).run();
+    const complete = [];
+    if (reviewCount === 0 && reviews.length === 0) {
+      complete.push(env.GATEWAY_DB.prepare(
+        "DELETE FROM platform_reviews WHERE widget_id = ? AND EXISTS (SELECT 1 FROM platform_review_widgets WHERE widget_id = ? AND business_identifier = ? AND source_revision = ?)"
+      ).bind(widget.widget_id, ...guard));
+    }
+    complete.push(env.GATEWAY_DB.prepare(
+      "UPDATE platform_review_widgets SET sync_status = 'ok', last_sync_at = ?, last_success_at = ?, last_sync_error = NULL, next_sync_at = ?, review_count = ?, average_rating = ?, updated_at = ? WHERE widget_id = ? AND business_identifier = ? AND source_revision = ?"
+    ).bind(syncedAt, syncedAt, nextCheckAt(SYNC_OK_MINUTES, new Date(syncedAt)), Number(reviewCount) || reviews.length, Number.isFinite(averageRating) ? averageRating : null, syncedAt, ...guard));
+    await env.GATEWAY_DB.batch(complete);
     return { ok: true, reviewCount: reviews.length };
   } catch (error) {
     await env.GATEWAY_DB.prepare(
-      "UPDATE platform_review_widgets SET sync_status = 'failed', last_sync_at = ?, last_sync_error = ?, next_sync_at = ?, updated_at = ? WHERE widget_id = ?"
-    ).bind(syncedAt, safeText(error?.message || "Не удалось получить отзывы.", 200), nextCheckAt(SYNC_RETRY_MINUTES, new Date(syncedAt)), syncedAt, widget.widget_id).run();
+      "UPDATE platform_review_widgets SET sync_status = 'failed', last_sync_at = ?, last_sync_error = ?, next_sync_at = ?, updated_at = ? WHERE widget_id = ? AND business_identifier = ? AND source_revision = ?"
+    ).bind(syncedAt, safeText(error?.message || "Не удалось получить отзывы.", 200), nextCheckAt(SYNC_RETRY_MINUTES, new Date(syncedAt)), syncedAt, ...guard).run();
     throw error;
   }
 }

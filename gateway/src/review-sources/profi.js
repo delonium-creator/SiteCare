@@ -1,3 +1,4 @@
+import { requireReviewItems } from "./util.js";
 // Профи.ру review adapter. Same shape of discovery as the 2GIS adapter:
 // no public reviews-read API, but the specialist's public profile page is a
 // Next.js app that server-renders a React Query "dehydrated state" blob
@@ -69,7 +70,7 @@ export async function fetchReviews(businessIdentifier, fetchImpl = fetch) {
   const queries = pageProps?.dehydratedState?.queries || [];
   const reviewsQuery = queries.find((query) => query?.queryKey?.[0] === "FullProfileReviews.infinite");
   const edges = reviewsQuery?.state?.data?.pages?.[0]?.pxf?.profile?.reviews?.edges;
-  const items = Array.isArray(edges) ? edges : [];
+  const items = requireReviewItems(edges);
   const reviews = items.slice(0, 100).map(({ node }) => ({
     externalId: safeText(node?.id, 60) || null,
     authorName: safeText(node?.author, 120) || "Гость Профи.ру",

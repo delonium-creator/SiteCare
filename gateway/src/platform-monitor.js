@@ -1,6 +1,7 @@
 import { analyzeForms } from "../../src/forms.js";
 import { telegramSendMessage } from "../../src/notifications.js";
 import { dayKey, newId, nextCheckAt, safeText, validateTargetUrl } from "./platform-core.js";
+import { monitorStatistics, reportingPeriod } from "./platform-reporting.js";
 import { generateSiteInsight } from "./platform-insights.js";
 
 const MAX_PAGE_BYTES = 1024 * 1024;
@@ -786,8 +787,8 @@ export async function inspectSite(site, fetchImpl = fetch) {
     };
   } catch (error) {
     return {
-      domainOk: false,
-      tlsOk: false,
+      domainOk: null,
+      tlsOk: null,
       pageOk: false,
       formOk: false,
       httpStatus: 0,
@@ -925,8 +926,8 @@ export async function checkPlatformSite(env, site, { notify = true, fetchImpl = 
     ).bind(
       checkedAt,
       nextCheckAt(site.monitor_interval_minutes),
-      result.domainOk ? 1 : 0,
-      result.tlsOk ? 1 : 0,
+      result.domainOk === null ? null : result.domainOk ? 1 : 0,
+      result.tlsOk === null ? null : result.tlsOk ? 1 : 0,
       result.pageOk ? 1 : 0,
       result.formOk ? 1 : 0,
       result.loaderOk === null ? null : result.loaderOk ? 1 : 0,
@@ -940,7 +941,7 @@ export async function checkPlatformSite(env, site, { notify = true, fetchImpl = 
     ),
     env.GATEWAY_DB.prepare(
       "INSERT INTO platform_monitor_runs (site_id, checked_at, domain_ok, tls_ok, page_ok, form_ok, http_status, latency_ms, form_count, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(site.site_id, checkedAt, result.domainOk ? 1 : 0, result.tlsOk ? 1 : 0, result.pageOk ? 1 : 0, result.formOk ? 1 : 0, result.httpStatus, result.latencyMs, result.formCount, safeText(result.details, 300)),
+    ).bind(site.site_id, checkedAt, result.domainOk === null ? null : result.domainOk ? 1 : 0, result.tlsOk === null ? null : result.tlsOk ? 1 : 0, result.pageOk ? 1 : 0, result.formOk ? 1 : 0, result.httpStatus, result.latencyMs, result.formCount, safeText(result.details, 300)),
     env.GATEWAY_DB.prepare(
       "INSERT INTO platform_usage_daily (account_id, usage_day, monitor_checks, form_signals, ai_requests) VALUES (?, ?, 1, 0, 0) ON CONFLICT(account_id, usage_day) DO UPDATE SET monitor_checks = monitor_checks + 1"
     ).bind(site.account_id, dayKey()),
@@ -1187,6 +1188,9 @@ export function buildDigestSummary({
   const scoreLine = score === null
     ? ""
     : ` Индекс здоровья: ${score}${scoreDelta > 0 ? ` (+${scoreDelta})` : scoreDelta < 0 ? ` (${scoreDelta})` : " (без изменений)"}.`;
+  if (checksCount === 0) {
+    return `За неделю нет данных о проверках доступности. Пока нельзя оценить стабильность сайта.${findingsCount > 0 ? ` Диагностика ранее нашла проблем: ${findingsCount}.` : ""}${incidentsOpened > 0 ? ` Зарегистрировано инцидентов: ${incidentsOpened}.` : ""}`;
+  }
   if (incidentsOpened === 0 && findingsCount === 0) {
     return `За неделю сайт проверен ${checksCount} раз — всё стабильно, поводов для беспокойства не найдено.${scoreLine}`;
   }
@@ -1207,12 +1211,11 @@ async function sendDigest(env, site, digest) {
 
 async function runSiteDigest(env, site) {
   const now = new Date();
-  const periodEnd = now.toISOString();
-  const periodStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const period = reportingPeriod(7, now);
+  const periodEnd = period.end;
+  const periodStart = period.start;
   const [checksRow, incidentsRow, latestHealth, priorHealth] = await Promise.all([
-    env.GATEWAY_DB.prepare(
-      "SELECT COUNT(*) AS count FROM platform_monitor_runs WHERE site_id = ? AND checked_at >= ?"
-    ).bind(site.site_id, periodStart).first(),
+    monitorStatistics(env, site.site_id, period),
     env.GATEWAY_DB.prepare(
       "SELECT SUM(CASE WHEN opened_at >= ? THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN resolved_at >= ? THEN 1 ELSE 0 END) AS resolved FROM platform_incidents WHERE site_id = ? AND (opened_at >= ? OR resolved_at >= ?)"
     ).bind(periodStart, periodStart, site.site_id, periodStart, periodStart).first(),
@@ -1228,7 +1231,7 @@ async function runSiteDigest(env, site) {
   const summaryText = buildDigestSummary({
     score,
     scoreDelta,
-    checksCount: Number(checksRow?.count || 0),
+    checksCount: Number(checksRow?.checks || 0),
     incidentsOpened: Number(incidentsRow?.opened || 0),
     incidentsResolved: Number(incidentsRow?.resolved || 0),
     findingsCount: Number(latestHealth?.issue_count || 0)
@@ -1240,7 +1243,7 @@ async function runSiteDigest(env, site) {
     periodEnd,
     score,
     scoreDelta,
-    checksCount: Number(checksRow?.count || 0),
+    checksCount: Number(checksRow?.checks || 0),
     incidentsOpened: Number(incidentsRow?.opened || 0),
     incidentsResolved: Number(incidentsRow?.resolved || 0),
     findingsCount: Number(latestHealth?.issue_count || 0),
@@ -1302,21 +1305,13 @@ export async function runDueMonitorRollups(env, { limit = 25 } = {}) {
 // platform_monitor_runs is capped at the last 1000 rows/site (~3.5 days at
 // the 5-minute cron cadence), so any report window beyond that would
 // silently under-count without the daily rollup. Combine rolled-up history
-// (accurate, unbounded) with today's still-unrolled raw runs (freshness) --
-// the rollup only ever covers up to yesterday, so there's no overlap to
-// double-count.
+// with raw runs from days that have not been rolled up yet. Each day is
+// represented once, including when the rollup job is delayed.
 export async function siteReport(env, siteId, days = 30) {
-  const boundedDays = Math.min(90, Math.max(1, Number(days) || 30));
-  const since = new Date(Date.now() - boundedDays * 24 * 60 * 60 * 1000);
-  const sinceDay = since.toISOString().slice(0, 10);
-  const todayStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
-  const [rollup, todayRuns, receipts, incidents, site] = await Promise.all([
-    env.GATEWAY_DB.prepare(
-      "SELECT SUM(checks) AS checks, SUM(page_ok_count) AS page_ok_count, SUM(checks * avg_latency_ms) AS latency_weighted FROM platform_monitor_daily WHERE site_id = ? AND day >= ?"
-    ).bind(siteId, sinceDay).first(),
-    env.GATEWAY_DB.prepare(
-      "SELECT COUNT(*) AS checks, SUM(page_ok) AS page_ok_count, AVG(latency_ms) AS average_latency FROM platform_monitor_runs WHERE site_id = ? AND checked_at >= ?"
-    ).bind(siteId, todayStart).first(),
+  const period = reportingPeriod(days);
+  const since = new Date(period.start);
+  const [metrics, receipts, incidents, site] = await Promise.all([
+    monitorStatistics(env, siteId, period),
     env.GATEWAY_DB.prepare(
       "SELECT COUNT(*) AS count FROM platform_form_receipts WHERE site_id = ? AND received_at >= ?"
     ).bind(siteId, since.toISOString()).first(),
@@ -1325,14 +1320,11 @@ export async function siteReport(env, siteId, days = 30) {
     ).bind(siteId, since.toISOString()).first(),
     env.GATEWAY_DB.prepare("SELECT domain_expires_at, domain_registrar, domain_check_error FROM platform_sites WHERE site_id = ?").bind(siteId).first()
   ]);
-  const checks = Number(rollup?.checks || 0) + Number(todayRuns?.checks || 0);
-  const ok = Number(rollup?.page_ok_count || 0) + Number(todayRuns?.page_ok_count || 0);
-  const latencySum = Number(rollup?.latency_weighted || 0) + Number(todayRuns?.checks || 0) * Number(todayRuns?.average_latency || 0);
   return {
-    days: boundedDays,
-    checks,
-    uptimePercent: checks ? Number(((ok / checks) * 100).toFixed(2)) : 100,
-    averageLatencyMs: checks ? Math.round(latencySum / checks) : 0,
+    days: period.days,
+    periodStart: period.start,
+    periodEnd: period.end,
+    ...metrics,
     formSignals: Number(receipts?.count || 0),
     incidents: Number(incidents?.count || 0),
     domainExpiresAt: site?.domain_expires_at || null,

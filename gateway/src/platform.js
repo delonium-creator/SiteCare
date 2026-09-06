@@ -1536,7 +1536,7 @@ async function assistantProposal(request, env, user, siteId) {
     },
     currentStatus: {
       pageAvailable: Boolean(Number(site.page_ok)),
-      tlsAvailable: Boolean(Number(site.tls_ok)),
+      tlsAvailable: site.tls_ok == null ? null : Boolean(Number(site.tls_ok)),
       formsRequired: Boolean(Number(site.form_required)),
       formsWorking: Boolean(Number(site.form_ok)),
       loaderConnected: Boolean(Number(site.loader_ok)),
@@ -2038,6 +2038,7 @@ function reviewWidgetRow(row) {
     enabled: Boolean(row.enabled),
     syncStatus: row.sync_status,
     lastSyncAt: row.last_sync_at,
+    lastSuccessAt: row.last_success_at,
     lastSyncError: row.last_sync_error,
     reviewCount: Number(row.review_count) || 0,
     averageRating: row.average_rating === null || row.average_rating === undefined ? null : Number(row.average_rating)
@@ -2115,9 +2116,31 @@ async function updateReviewWidget(request, env, user, siteId, widgetId) {
     if (!adapter) fail("Этот источник больше не поддерживается.");
     businessIdentifier = adapter.normalizeIdentifier(body.businessIdentifier);
   }
-  await env.GATEWAY_DB.prepare(
-    "UPDATE platform_review_widgets SET business_identifier = ?, design_template_key = ?, enabled = ?, updated_at = ?, updated_by = ? WHERE widget_id = ?"
-  ).bind(businessIdentifier, designTemplateKey, enabled, now, user.user_id, widgetId).run();
+  const sourceChanged = businessIdentifier !== existing.business_identifier;
+  const revision = Number(existing.source_revision || 1);
+  const statements = [];
+  if (sourceChanged) {
+    statements.push(env.GATEWAY_DB.prepare(
+      "DELETE FROM platform_reviews WHERE widget_id = ? AND EXISTS (SELECT 1 FROM platform_review_widgets WHERE widget_id = ? AND source_revision = ?)"
+    ).bind(widgetId, widgetId, revision));
+  }
+  statements.push(env.GATEWAY_DB.prepare(
+    "UPDATE platform_review_widgets SET business_identifier = ?, design_template_key = ?, enabled = ?, updated_at = ?, updated_by = ?, " +
+    "source_revision = source_revision + ?, " +
+    "sync_status = CASE WHEN ? THEN 'pending' ELSE sync_status END, " +
+    "last_success_at = CASE WHEN ? THEN NULL ELSE last_success_at END, " +
+    "last_sync_at = CASE WHEN ? THEN NULL ELSE last_sync_at END, " +
+    "last_sync_error = CASE WHEN ? THEN NULL ELSE last_sync_error END, " +
+    "next_sync_at = CASE WHEN ? THEN NULL ELSE next_sync_at END, " +
+    "review_count = CASE WHEN ? THEN 0 ELSE review_count END, " +
+    "average_rating = CASE WHEN ? THEN NULL ELSE average_rating END " +
+    "WHERE widget_id = ? AND source_revision = ?"
+  ).bind(businessIdentifier, designTemplateKey, enabled, now, user.user_id,
+    Number(sourceChanged), Number(sourceChanged), Number(sourceChanged), Number(sourceChanged),
+    Number(sourceChanged), Number(sourceChanged || (enabled && !Number(existing.enabled))),
+    Number(sourceChanged), Number(sourceChanged), widgetId, revision));
+  const results = await env.GATEWAY_DB.batch(statements);
+  if (!results.at(-1)?.meta?.changes) fail("Источник уже изменился. Обновите страницу и повторите действие.", 409, "SOURCE_CHANGED");
   const refreshed = await env.GATEWAY_DB.prepare("SELECT * FROM platform_review_widgets WHERE widget_id = ?").bind(widgetId).first();
   await audit(env, user, site.account_id, "site.reviews.update", "site", siteId, widgetId);
   return json({ ok: true, widget: reviewWidgetRow(refreshed) });
@@ -2144,7 +2167,7 @@ async function publicReviewsWidget(request, env, siteId) {
   if (origin && origin !== site.target_origin) fail("Страница не входит в подключённый сайт.", 403, "ORIGIN_REJECTED");
   const enabled = site.status === "active" && site.account_status === "active";
   const widgets = enabled ? await env.GATEWAY_DB.prepare(
-    "SELECT widget_id, service_key, business_identifier, design_template_key, review_count, average_rating, last_sync_at FROM platform_review_widgets WHERE site_id = ? AND enabled = 1 AND sync_status = 'ok' ORDER BY updated_at"
+    "SELECT widget_id, service_key, business_identifier, design_template_key, review_count, average_rating, last_success_at, sync_status FROM platform_review_widgets WHERE site_id = ? AND enabled = 1 AND last_success_at IS NOT NULL ORDER BY updated_at"
   ).bind(siteId).all() : { results: [] };
   const widgetRows = widgets?.results || [];
   const scrapedRows = widgetRows.filter((row) => REVIEW_SOURCES[row.service_key]?.renderMode !== "iframe");
@@ -2163,7 +2186,7 @@ async function publicReviewsWidget(request, env, siteId) {
     });
     reviewsByWidget.set(row.widget_id, list);
   }
-  const version = widgetRows.map((row) => row.last_sync_at).filter(Boolean).sort().at(-1) || "0";
+  const version = widgetRows.map((row) => row.last_success_at).filter(Boolean).sort().at(-1) || "0";
   return json({
     ok: true,
     siteId,
@@ -2179,6 +2202,8 @@ async function publicReviewsWidget(request, env, siteId) {
         designTemplateKey: row.design_template_key,
         renderMode: isEmbed ? "iframe" : "reviews",
         embedUrl: isEmbed ? row.business_identifier : null,
+        lastSuccessAt: row.last_success_at,
+        stale: row.sync_status !== "ok",
         reviewCount: Number(row.review_count) || 0,
         averageRating: row.average_rating === null || row.average_rating === undefined ? null : Number(row.average_rating),
         reviews: reviewsByWidget.get(row.widget_id) || []
