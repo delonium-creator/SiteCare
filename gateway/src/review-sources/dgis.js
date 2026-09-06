@@ -1,3 +1,4 @@
+import { requireReviewItems } from "./util.js";
 // 2GIS review adapter. 2GIS has no public reviews-read API (confirmed
 // during research for this feature), so this reads the same data their own
 // site renders for anyone, unauthenticated: a business's public reviews
@@ -62,7 +63,7 @@ export async function fetchReviews(businessIdentifier, fetchImpl = fetch) {
   const state = extractHydratedState(html);
   const reviewsQuery = (state?.queries || []).find((query) => query?.queryKey?.[0] === "fetchEntityReviews");
   const page = reviewsQuery?.state?.data?.pages?.[0];
-  const items = Array.isArray(page?.items) ? page.items : [];
+  const items = requireReviewItems(page?.items);
   const reviews = items.slice(0, 100).map((item) => ({
     externalId: safeText(item?.id, 60) || null,
     authorName: safeText(item?.user?.name || item?.user?.first_name, 120) || "Гость 2ГИС",

@@ -63,3 +63,10 @@ export async function fetchSourcePage(url, fetchImpl = fetch) {
   if (!response.ok) throw new Error(`Источник вернул ошибку HTTP ${response.status}.`);
   return boundedText(response);
 }
+
+export function requireReviewItems(items) {
+  if (!Array.isArray(items)) {
+    throw new Error("Не удалось распознать отзывы на странице источника. Сохранённые отзывы остаются доступны; обновление будет повторено.");
+  }
+  return items;
+}

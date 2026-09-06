@@ -64,7 +64,8 @@ const PLATFORM_MIGRATIONS = [
   "gateway/migrations/0024_image_alt_rules.sql",
   "gateway/migrations/0025_diagnostics_cache.sql",
   "gateway/migrations/0026_telegram_destination_name.sql",
-  "gateway/migrations/0027_review_widgets.sql"
+  "gateway/migrations/0027_review_widgets.sql",
+  "gateway/migrations/0028_reliable_observations.sql"
 ];
 
 test("site-wide loader safely recognizes visible phone numbers", () => {
@@ -1784,15 +1785,12 @@ test("2GIS adapter fetchReviews extracts reviews from the hydrated JSON, not DOM
   assert.equal(result.reviews[1].authorAvatarUrl, "https://i2.photo.2gis.com/images/profile/example_64x64.jpg");
 });
 
-test("2GIS adapter fetchReviews degrades to an empty result instead of throwing when the page structure changes", async () => {
+test("2GIS adapter fetchReviews rejects an unrecognized page instead of reporting a successful empty snapshot", async () => {
   const fetchImpl = async () => new Response("<!doctype html><html><body>no hydration blob here</body></html>", {
     status: 200,
     headers: { "Content-Type": "text/html; charset=utf-8" }
   });
-  const result = await fetchDgisReviews("https://2gis.ru/moscow/firm/123456789", fetchImpl);
-  assert.deepEqual(result.reviews, []);
-  assert.equal(result.averageRating, null);
-  assert.equal(result.reviewCount, 0);
+  await assert.rejects(() => fetchDgisReviews("https://2gis.ru/moscow/firm/123456789", fetchImpl), /Не удалось распознать отзывы/u);
 });
 
 test("2GIS adapter fetchReviews still throws on a real fetch failure", async () => {
@@ -1855,6 +1853,19 @@ test("syncReviewWidget records a failed sync without losing previously synced re
     assert.match(widgetAfterFailure.last_sync_error, /503/u);
     const stillThere = await database.prepare("SELECT COUNT(*) AS count FROM platform_reviews WHERE widget_id = ?").bind(widgetId).first();
     assert.equal(stillThere.count, 2);
+    await database.prepare("UPDATE platform_sites SET reviews_widget_key = 'public-test-key' WHERE site_id = 'reviews-site'").run();
+    const stale = await body(await gateway.fetch(request('/v1/public/sites/reviews-site/reviews?key=public-test-key', {
+      origin: 'https://reviews-client.example.test'
+    }), environment));
+    assert.equal(stale.widgets.length, 1);
+    assert.equal(stale.widgets[0].reviews.length, 2);
+    assert.equal(stale.widgets[0].stale, true);
+    assert.ok(stale.widgets[0].lastSuccessAt);
+    await syncReviewWidget(environment, widgetRow, okFetch);
+    const recovered = await body(await gateway.fetch(request('/v1/public/sites/reviews-site/reviews?key=public-test-key', {
+      origin: 'https://reviews-client.example.test'
+    }), environment));
+    assert.equal(recovered.widgets[0].stale, false);
   } finally {
     await runtime.dispose();
   }
@@ -2008,6 +2019,31 @@ test("review-widget routes let an operator connect a 2GIS source and the public 
     assert.match(widgetScriptBody, /data-sitecare-reviews/u);
     assert.doesNotThrow(() => new Script(widgetScriptBody, { filename: "sitecare-reviews-widget.js" }));
 
+    const previousSource = await database.prepare("SELECT * FROM platform_review_widgets WHERE widget_id = ?").bind(created.widget.widgetId).first();
+    const changedSourceResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/review-widgets/${created.widget.widgetId}`, {
+      method: "PATCH", cookie: operatorCookie, csrf: login.csrf,
+      body: { businessIdentifier: "https://2gis.ru/moscow/firm/987654321" }
+    }), environment);
+    assert.equal(changedSourceResponse.status, 200);
+    const changedSource = await body(changedSourceResponse);
+    assert.equal(changedSource.widget.syncStatus, "pending");
+    assert.equal(changedSource.widget.lastSuccessAt, null);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM platform_reviews WHERE widget_id = ?").bind(created.widget.widgetId).first()).count, 0);
+    // A fetch started before the change must not bring the old organization's
+    // reviews back, nor may its failure overwrite the new source's status.
+    await syncReviewWidget(environment, previousSource, async () => new Response(DGIS_FIXTURE_HTML));
+    await assert.rejects(() => syncReviewWidget(environment, previousSource, async () => { throw new Error("old source failed"); }));
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM platform_reviews WHERE widget_id = ?").bind(created.widget.widgetId).first()).count, 0);
+    const replacement = await database.prepare("SELECT * FROM platform_review_widgets WHERE widget_id = ?").bind(created.widget.widgetId).first();
+    assert.equal(replacement.sync_status, "pending");
+    assert.equal(replacement.source_revision, 2);
+    await syncReviewWidget(environment, replacement, async () => new Response(DGIS_FIXTURE_HTML.replaceAll('Игорь Игоревич', 'Новый клиент')));
+    const replacedPublic = await body(await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/reviews?key=${siteRow.reviews_widget_key}`, {
+      origin: "https://reviews-client2.example.test"
+    }), environment));
+    assert.equal(replacedPublic.widgets[0].reviews.length, 2);
+    assert.equal(replacedPublic.widgets[0].reviews[0].authorName, "Новый клиент");
+
     const updateResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/review-widgets/${created.widget.widgetId}`, {
       method: "PATCH",
       cookie: operatorCookie,
@@ -2107,15 +2143,12 @@ test("Профи.ру adapter fetchReviews extracts reviews from __NEXT_DATA__, 
   assert.equal(result.reviews[1].rating, 4);
 });
 
-test("Профи.ру adapter fetchReviews degrades to an empty result instead of throwing when the page structure changes", async () => {
+test("Профи.ру adapter fetchReviews rejects an unrecognized page instead of reporting a successful empty snapshot", async () => {
   const fetchImpl = async () => new Response("<!doctype html><html><body>no next data here</body></html>", {
     status: 200,
     headers: { "Content-Type": "text/html; charset=utf-8" }
   });
-  const result = await fetchProfiReviews("https://profi.ru/profile/TestSpec1/", fetchImpl);
-  assert.deepEqual(result.reviews, []);
-  assert.equal(result.averageRating, null);
-  assert.equal(result.reviewCount, 0);
+  await assert.rejects(() => fetchProfiReviews("https://profi.ru/profile/TestSpec1/", fetchImpl), /Не удалось распознать отзывы/u);
 });
 
 test("Профи.ру adapter fetchReviews still throws on a real fetch failure", async () => {
@@ -2354,15 +2387,12 @@ test("Т-Банк Отзывы adapter fetchReviews extracts reviews from __TRAM
   assert.equal(result.reviews[1].rating, 1);
 });
 
-test("Т-Банк Отзывы adapter fetchReviews degrades to an empty result instead of throwing when the page structure changes", async () => {
+test("Т-Банк Отзывы adapter fetchReviews rejects an unrecognized page instead of reporting a successful empty snapshot", async () => {
   const fetchImpl = async () => new Response("<!doctype html><html><body>no tramvai state here</body></html>", {
     status: 200,
     headers: { "Content-Type": "text/html; charset=utf-8" }
   });
-  const result = await fetchTbankReviews("https://www.tbank.ru/reviews/company/vkusvill/11948/", fetchImpl);
-  assert.deepEqual(result.reviews, []);
-  assert.equal(result.averageRating, null);
-  assert.equal(result.reviewCount, 0);
+  await assert.rejects(() => fetchTbankReviews("https://www.tbank.ru/reviews/company/vkusvill/11948/", fetchImpl), /Не удалось распознать отзывы/u);
 });
 
 test("Т-Банк Отзывы adapter fetchReviews still throws on a real fetch failure", async () => {
@@ -2439,15 +2469,12 @@ test("Yandex Maps adapter fetchReviews extracts reviews from the hydrated state-
   assert.equal(result.reviews[1].authorAvatarUrl, null);
 });
 
-test("Yandex Maps adapter fetchReviews degrades to an empty result instead of throwing when the page structure changes", async () => {
+test("Yandex Maps adapter fetchReviews rejects an unrecognized page instead of reporting a successful empty snapshot", async () => {
   const fetchImpl = async () => new Response("<!doctype html><html><body>no state-view here</body></html>", {
     status: 200,
     headers: { "Content-Type": "text/html; charset=utf-8" }
   });
-  const result = await fetchYandexMapsReviews("https://yandex.ru/maps/org/60041962835/reviews/", fetchImpl);
-  assert.deepEqual(result.reviews, []);
-  assert.equal(result.averageRating, null);
-  assert.equal(result.reviewCount, 0);
+  await assert.rejects(() => fetchYandexMapsReviews("https://yandex.ru/maps/org/60041962835/reviews/", fetchImpl), /Не удалось распознать отзывы/u);
 });
 
 test("Yandex Maps adapter fetchReviews still throws on a real fetch failure", async () => {
