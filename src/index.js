@@ -311,8 +311,8 @@ async function handleLogin(request, env) {
 
 async function handlePublicConfig(request, env) {
   const config = await getConfig(env);
-  const result = publicConfig(config);
-  const etag = `\"sitecare-${config.version}-${config.enabled ? 1 : 0}\"`;
+  const result = {...publicConfig(config),enabled:false,phone:"",hours:"",ctaText:"",ctaLink:""};
+  const etag = `\"sitecare-care-${config.version}-0\"`;
   const headers = {
     ...corsHeaders(request),
     "Cache-Control": "public, max-age=15, stale-if-error=300",
@@ -1362,7 +1362,7 @@ async function handleRequest(request, env) {
     return Response.redirect(`${url.origin}/admin`, 302);
   }
   if (request.method === "GET" && path === "/admin") {
-    return new Response(adminHtml({ sharedBot: Boolean(env.TELEGRAM_GATEWAY_URL || env.TELEGRAM_SITE_TOKEN) }), {
+    return new Response(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>SiteCare — сопровождение</title><style>body{font:16px/1.6 system-ui;background:#f3f5f7;color:#17232c;max-width:640px;padding:40px;margin:8vh auto}h1{font-size:28px}section{background:white;border:1px solid #dce3e7;border-radius:14px;padding:32px}</style><section><h1>Кабинет сопровождения SiteCare</h1><p>Редактирование сайта через эту панель отключено. Правки выполняет специалист в Tilda после согласования задачи.</p><p>Откройте основной кабинет SiteCare по ссылке, которую выдал ваш специалист. Проверки сайта и приём заявок продолжают работать.</p></section></html>`, {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",
@@ -1393,6 +1393,7 @@ async function handleRequest(request, env) {
   if (path.startsWith("/api/admin/")) {
     await requireSession(request, env);
     if (request.method !== "GET") requireSameOrigin(request);
+    if (request.method === "POST" && ["assistant","propose","apply","toggle","rollback"].some(action=>path==="/api/admin/"+action)) return json({ok:false,error:"Редактирование перенесено в работу специалиста. Используйте кабинет сопровождения.",code:"SITE_EDITING_REMOVED"},410);
     if (request.method === "GET" && path === "/api/admin/session") return json({ ok: true }, 200, { "Cache-Control": "no-store" });
     if (request.method === "GET" && path === "/api/admin/state") return handleAdminState(env);
     if (request.method === "POST" && path === "/api/admin/assistant") return handleAssistant(request, env);

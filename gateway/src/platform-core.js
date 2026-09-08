@@ -849,10 +849,8 @@ function sitecareLoaderRuntime(replacePhoneText, makePhoneHref, replaceScheduleT
 }
 
 export function loaderJavascript() {
-  // Wrangler/esbuild may add __name(...) calls inside Function#toString output.
-  // The public loader is a separate script, so it needs the same tiny helper
-  // in its own scope instead of relying on the gateway bundle scope.
-  return `(()=>{"use strict";const __name=(target,value)=>Object.defineProperty(target,"name",{value,configurable:true});const replacePhoneText=${replacePhoneNumbersInText.toString()};const makePhoneHref=${phoneHref.toString()};const replaceScheduleText=${replaceScheduleInText.toString()};(${sitecareLoaderRuntime.toString()})(replacePhoneText,makePhoneHref,replaceScheduleText)})();`;
+  // Observation-only marker. No selectors, replacement rules, or page mutations.
+  return `(()=>{"use strict";const script=document.currentScript;if(!script)return;const id=script.dataset.sitecareSite,key=script.dataset.sitecareKey;if(!id||!key)return;const base=new URL(script.src).origin;fetch(base+"/v1/public/sites/"+encodeURIComponent(id)+"/config?key="+encodeURIComponent(key),{credentials:"omit",cache:"no-store",referrerPolicy:"no-referrer"}).then(r=>r.ok?r.json():null).then(c=>{if(c&&c.origin===location.origin&&c.siteId===id){document.documentElement.setAttribute("data-sitecare-loader","care");document.documentElement.setAttribute("data-sitecare-status","connected");}}).catch(()=>{});})();`;
 }
 
 // One generator function per design_template_key. Pure string-in/string-out
