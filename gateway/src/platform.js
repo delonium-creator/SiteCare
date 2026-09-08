@@ -72,6 +72,8 @@ import {
   supportRequestDetails,
   updateSupportRequest
 } from "./platform-support.js";
+import {careList,careQueue,careDetails,createCare,updateCare} from "./platform-care.js";
+import {siteFindings} from "./platform-findings.js";
 import { inviteHtml, platformHtml, resetPasswordHtml } from "./platform-ui.js";
 import {
   buildYandexAuthorizeUrl,
@@ -847,7 +849,7 @@ async function dashboard(request, env, user) {
   })) : [];
   const supportCountRow = user.platform_role === "operator"
     ? await env.GATEWAY_DB.prepare(
-      "SELECT COUNT(*) AS open_count, SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS new_count, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_count, SUM(CASE WHEN status = 'waiting_client' THEN 1 ELSE 0 END) AS waiting_count FROM platform_support_requests WHERE status IN ('new','active','waiting_client')"
+      "SELECT COUNT(*) AS open_count, SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS new_count, SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) AS active_count, SUM(CASE WHEN status = 'waiting_client' THEN 1 ELSE 0 END) AS waiting_count FROM platform_care_requests WHERE status NOT IN ('completed','canceled')"
     ).first()
     : null;
   return json({
@@ -1251,7 +1253,7 @@ async function supportTelegramRecipients(env) {
 }
 
 async function notifySupportTeam(env, request, supportRequest, { followup = false } = {}) {
-  const supportUrl = `${new URL(request.url).origin}/app?view=support&request=${encodeURIComponent(supportRequest.requestId)}`;
+  const supportUrl = `${new URL(request.url).origin}/app?site=${encodeURIComponent(supportRequest.siteId || "")}&request=${encodeURIComponent(supportRequest.requestId)}#work`;
   const telegramText = followup
     ? `💬 Новое сообщение в поддержке\n${supportRequest.accountName} · ${supportRequest.siteName}\n${supportUrl}`
     : `🆘 Новое обращение в поддержку\n${supportRequest.accountName} · ${supportRequest.siteName}\n${supportRequest.summary}\n${supportUrl}`;
@@ -1268,7 +1270,7 @@ async function notifySupportTeam(env, request, supportRequest, { followup = fals
         siteName: supportRequest.siteName,
         summary: supportRequest.summary,
         supportUrl,
-        requestId: `${supportRequest.requestId}-${recipient.email}`
+        requestId: `${supportRequest.notificationId || supportRequest.requestId}-${recipient.email}`
       }));
     }
   }
@@ -1277,7 +1279,7 @@ async function notifySupportTeam(env, request, supportRequest, { followup = fals
 
 async function notifySupportReply(env, request, details) {
   const supportRequest = details.request;
-  const chatUrl = `${new URL(request.url).origin}/app?view=edit&site=${encodeURIComponent(supportRequest.siteId)}`;
+  const chatUrl = `${new URL(request.url).origin}/app?site=${encodeURIComponent(supportRequest.siteId)}&request=${encodeURIComponent(supportRequest.requestId)}#requests`;
   const tasks = [];
   const destination = await env.GATEWAY_DB.prepare(
     "SELECT chat_id FROM telegram_destinations WHERE site_id = ? AND enabled = 1"
@@ -1294,10 +1296,18 @@ async function notifySupportReply(env, request, details) {
       to: supportRequest.requesterEmail,
       siteName: supportRequest.siteName,
       chatUrl,
-      requestId: supportRequest.requestId
+      requestId: supportRequest.notificationId || supportRequest.requestId
     }));
   }
   if (tasks.length) await Promise.allSettled(tasks);
+}
+
+async function notifyCareChange(env, request, user, result, created=false) {
+  const row=result.request;
+  const context=await env.GATEWAY_DB.prepare("SELECT a.name AS account_name,s.name AS site_name,u.email FROM platform_accounts a JOIN platform_sites s ON s.account_id=a.account_id JOIN platform_users u ON u.user_id=? WHERE s.site_id=?").bind(row.created_by,row.site_id).first();
+  const item={requestId:row.request_id,siteId:row.site_id,accountName:context?.account_name||"",siteName:context?.site_name||"",summary:row.title,notificationId:row.request_id+"-"+row.revision,requesterEmail:context?.email||""};
+  if(user.platform_role==="operator")await notifySupportReply(env,request,{request:item});
+  else await notifySupportTeam(env,request,item,{followup:!created});
 }
 
 async function conversationState(env, user, siteId) {
@@ -2703,74 +2713,10 @@ async function publicConfig(request, env, siteId) {
   if (!site || !constantTimeEqual(key, site.loader_key)) fail("Конфигурация не найдена.", 404, "NOT_FOUND");
   const origin = request.headers.get("Origin") || "";
   if (origin && origin !== site.target_origin) fail("Страница не входит в подключённый сайт.", 403, "ORIGIN_REJECTED");
-  const [rules, phoneRules, phoneTargetRules, contentRules] = await Promise.all([
-    env.GATEWAY_DB.prepare(
-      "SELECT candidate_id, page_path, block_id, original_text, original_url, match_index, scope, new_text, new_url, version FROM platform_button_rules WHERE site_id = ? AND enabled = 1 ORDER BY updated_at"
-    ).bind(siteId).all(),
-    env.GATEWAY_DB.prepare(
-      "SELECT original_phone, original_digits, new_phone, version FROM platform_phone_rules WHERE site_id = ? AND enabled = 1 ORDER BY updated_at"
-    ).bind(siteId).all(),
-    env.GATEWAY_DB.prepare(
-      "SELECT candidate_id, page_path, block_id, source, original_phone, original_digits, occurrence_index, scope, new_phone, version FROM platform_phone_target_rules WHERE site_id = ? AND enabled = 1 ORDER BY updated_at"
-    ).bind(siteId).all(),
-    env.GATEWAY_DB.prepare(
-      "SELECT field, candidate_id, page_path, block_id, match_index, scope, original_value, new_value, version FROM platform_content_rules WHERE site_id = ? AND enabled = 1 ORDER BY updated_at"
-    ).bind(siteId).all()
-  ]);
-  return json({
-    ok: true,
-    siteId,
-    origin: site.target_origin,
-    pathname: site.target_pathname,
-    scope: site.scope,
-    enabled: site.status === "active" && site.account_status === "active" && Boolean(site.enabled),
-    phone: site.phone,
-    phoneRules: (phoneRules?.results || []).map((rule) => ({
-      originalPhone: rule.original_phone,
-      originalDigits: rule.original_digits,
-      newPhone: rule.new_phone,
-      version: Number(rule.version)
-    })),
-    phoneTargetRules: (phoneTargetRules?.results || []).map((rule) => ({
-      candidateId: rule.candidate_id,
-      pagePath: rule.page_path,
-      blockId: rule.block_id,
-      source: rule.source,
-      originalPhone: rule.original_phone,
-      originalDigits: rule.original_digits,
-      occurrenceIndex: Number(rule.occurrence_index),
-      scope: rule.scope,
-      newPhone: rule.new_phone,
-      version: Number(rule.version)
-    })),
-    scheduleText: site.schedule_text,
-    buttonText: site.button_text,
-    buttonUrl: site.button_url,
-    buttonRules: (rules?.results || []).map((rule) => ({
-      candidateId: rule.candidate_id,
-      pagePath: rule.page_path,
-      blockId: rule.block_id,
-      originalText: rule.original_text,
-      originalUrl: rule.original_url,
-      matchIndex: Number(rule.match_index),
-      scope: rule.scope,
-      newText: rule.new_text,
-      newUrl: rule.new_url,
-      version: Number(rule.version)
-    })),
-    contentRules: (contentRules?.results || []).map((rule) => ({
-      field: rule.field,
-      candidateId: rule.candidate_id,
-      pagePath: rule.page_path,
-      blockId: rule.block_id,
-      matchIndex: Number(rule.match_index),
-      scope: rule.scope,
-      originalValue: rule.original_value,
-      newValue: rule.new_value,
-      version: Number(rule.version)
-    })),
-    version: Number(site.version)
-  }, 200, origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin", "Cross-Origin-Resource-Policy": "cross-origin" } : {});
+  return json({ok:true,siteId,origin:site.target_origin,pathname:site.target_pathname,scope:site.scope,
+    enabled:false,serviceMode:"care",phone:"",scheduleText:"",buttonText:"",buttonUrl:"",
+    phoneRules:[],phoneTargetRules:[],buttonRules:[],contentRules:[],version:Number(site.version)+1
+  },200,origin?{"Access-Control-Allow-Origin":origin,Vary:"Origin","Cross-Origin-Resource-Policy":"cross-origin"}:{});
 }
 
 function corsForSite(origin) {
@@ -3062,16 +3008,12 @@ async function accountLeadPage(request, env, user, accountId) {
   const before = String(url.searchParams.get("before") || "");
   const beforeId = String(url.searchParams.get("beforeId") || "");
   const hasCursor = Boolean(before && !Number.isNaN(Date.parse(before)) && /^lead_[a-z0-9_-]{4,100}$/u.test(beforeId));
-  const statement = hasCursor
-    ? env.GATEWAY_DB.prepare(
-      "SELECT l.*, s.name AS site_name FROM platform_leads l JOIN platform_sites s ON s.site_id = l.site_id " +
-      "WHERE l.account_id = ? AND (l.received_at < ? OR (l.received_at = ? AND l.lead_id < ?)) " +
-      "ORDER BY l.received_at DESC, l.lead_id DESC LIMIT ?"
-    ).bind(accountId, before, before, beforeId, limit + 1)
-    : env.GATEWAY_DB.prepare(
-      "SELECT l.*, s.name AS site_name FROM platform_leads l JOIN platform_sites s ON s.site_id = l.site_id " +
-      "WHERE l.account_id = ? ORDER BY l.received_at DESC, l.lead_id DESC LIMIT ?"
-    ).bind(accountId, limit + 1);
+  const selectedSite=String(url.searchParams.get("site")||"");
+  if(selectedSite){const access=await siteAccess(env,user,selectedSite,"viewer");if(access.site.account_id!==accountId)fail("Сайт не входит в кабинет.",403,"FORBIDDEN");}
+  const clauses=["l.account_id = ?"],values=[accountId];
+  if(selectedSite){clauses.push("l.site_id = ?");values.push(selectedSite);}
+  if(hasCursor){clauses.push("(l.received_at < ? OR (l.received_at = ? AND l.lead_id < ?))");values.push(before,before,beforeId);}
+  const statement=env.GATEWAY_DB.prepare("SELECT l.*,s.name AS site_name FROM platform_leads l JOIN platform_sites s ON s.site_id=l.site_id WHERE "+clauses.join(" AND ")+" ORDER BY l.received_at DESC,l.lead_id DESC LIMIT ?").bind(...values,limit+1);
   const result = await statement.all();
   const rows = result?.results || [];
   const pageRows = rows.slice(0, limit);
@@ -3292,6 +3234,48 @@ export async function handlePlatformRoute(request, env, path) {
   if (!path.startsWith("/v1/platform/")) return null;
   const csrf = request.method !== "GET" && request.method !== "HEAD";
   const user = await sessionUser(request, env, { csrf });
+  const disabledEdit = /^\/v1\/platform\/sites\/[^/]+\/(assistant(?:\/locate-phone)?|selection|changes\/apply|overrides(?:\/rollback)?|conversation\/quick)$/u.test(path);
+  if (disabledEdit && !(request.method === "GET" && path.endsWith("/overrides"))) {
+    fail("Изменения выполняет специалист в Tilda. Создайте обращение в поддержке сайта.",410,"SITE_EDITING_REMOVED");
+  }
+  if(request.method==="POST" && (/^\/v1\/platform\/sites\/[^/]+\/support$/u.test(path)||/^\/v1\/platform\/support\/sup_[a-z0-9_-]+$/u.test(path)))fail("Обновите кабинет и используйте раздел обращений.",410,"SUPPORT_MOVED");
+  if(request.method==="GET" && path==="/v1/platform/care/queue"){
+    if(user.platform_role!=="operator")fail("Доступ запрещён.",403,"FORBIDDEN");
+    return json({ok:true,requests:await careQueue(env)});
+  }
+  match=/^\/v1\/platform\/sites\/([a-z0-9][a-z0-9_-]{2,79})\/care(?:\/(check|[a-z0-9_-]+))?$/u.exec(path);
+  if(match){
+    const {site,account}=await siteAccess(env,user,match[1],"viewer");
+    if(request.method!=="GET"){
+      await accountAccess(env,user,site.account_id,"manager");
+      await enforceActionLimit(env,`care:${user.user_id}:${site.site_id}`,30,300);
+    }
+    if(request.method==="GET"&&!match[2])return json({ok:true,...await siteFindings(env,site),requests:await careList(env,site.site_id)});
+    if(request.method==="GET"&&match[2])return json({ok:true,...await careDetails(env,site.site_id,match[2])});
+    if(request.method==="POST"&&match[2]==="check"){
+      await requireFeature(env,user,account,"control");
+      await enforceActionLimit(env,`care-scan:${user.user_id}:${site.site_id}`,6,3600);
+      const scan=await scanSiteInventory(site,fetch,{maxPages:site.scope==="site"?40:1});
+      await recordHealthCheck(env,site,scan);
+      await checkPlatformSite(env,site,{notify:false});
+      const updated=await env.GATEWAY_DB.prepare("SELECT * FROM platform_sites WHERE site_id=?").bind(site.site_id).first();
+      return json({ok:true,...await siteFindings(env,updated)});
+    }
+    if(request.method==="POST"&&!match[2]){
+      if(user.platform_role==="operator")fail("Обращение создаёт клиент.",403,"FORBIDDEN");
+      const result=await createCare(env,site,user,await requestJson(request));
+      await audit(env,user,site.account_id,"care.create","care",result.request.request_id,result.request.title);
+      if(result.created)await notifyCareChange(env,request,user,result,true).catch(()=>console.error("care_notification_failed"));
+      return json({ok:true,...result},result.created?201:200);
+    }
+    if(request.method==="POST"&&match[2]){
+      const body=await requestJson(request);
+      const result=await updateCare(env,site,user,match[2],body);
+      await audit(env,user,site.account_id,"care."+safeText(body.action,30),"care",match[2]);
+      await notifyCareChange(env,request,user,result).catch(()=>console.error("care_notification_failed"));
+      return json({ok:true,...result});
+    }
+  }
   if (request.method === "GET" && path === "/v1/platform/session") {
     const memberships = await env.GATEWAY_DB.prepare("SELECT account_id FROM platform_memberships WHERE user_id = ? ORDER BY created_at").bind(user.user_id).all();
     return json({ ok: true, csrf: user.csrf_token, accounts: memberships?.results || [], platformRole: user.platform_role });

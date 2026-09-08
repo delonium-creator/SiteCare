@@ -24,7 +24,7 @@ Main SiteCare Worker
 (src/, Cloudflare Worker)
         |
         +--> Main D1
-        +--> site diagnostics / forms / changes / notifications
+        +--> site diagnostics / forms / notifications
 
 Review relay
 (relay/, standalone Node service on separate VPS)
@@ -36,7 +36,7 @@ Review relay
 
 Entry point: `src/index.js` via root `wrangler.jsonc`.
 
-Responsibilities include site-specific SiteCare behavior, diagnostics, forms, notifications, assistant logic and safe site-change flows. It uses the root D1 database (`DB`) and its own migration history in `migrations/`.
+Responsibilities include site-specific SiteCare behavior, diagnostics, forms and notifications. Automatic editing routes are retired with HTTP 410; public configuration is inert. Legacy helper modules remain for historical compatibility and are not exposed as editing capabilities. It uses the root D1 database (`DB`) and its own migration history in `migrations/`.
 
 Important rule: this Worker and its database are a separate deployment boundary from the gateway.
 
@@ -46,19 +46,32 @@ Entry point: `gateway/src/index.js` via `gateway/wrangler.jsonc`.
 
 This is the central product surface and contains the modern platform modules:
 - `platform-core.js` — shared platform primitives and core behavior;
-- `platform-assistant.js` — assistant flow;
+- `platform-assistant.js` — legacy proposal helpers; editing routes are retired;
 - `platform-monitor.js` — monitoring and diagnostics;
 - `platform-openai.js` — OpenAI integration;
 - `platform-leads.js` — leads/forms-facing platform logic;
-- `platform-support.js` — support workflows;
+- `platform-care.js` — versioned requests, encrypted messages, quotes, acceptance and work outcomes;
+- `platform-findings.js` — allowlisted factual findings, evidence and freshness;
+- `platform-support.js` — legacy history and notification primitives;
 - `platform-email.js` — email behavior;
 - `platform-reviews.js` and `review-sources/` — review aggregation;
-- `platform-ui.js` — central UI rendering and browser code;
+- `service-ui.js`, `service-ui-client.js`, `service-ui-styles.js` — common care workspace shell, browser interactions and styles;
+- `platform-ui.js` — invitation/password pages, legacy event helper and workspace re-export;
 - other `platform-*.js` modules — domain-specific features.
 
 It uses `GATEWAY_DB` and migrations under `gateway/migrations/`.
 
-`gateway/src/platform-ui.js` is very large and therefore a high-risk integration point. Prefer targeted edits and regression tests over broad rewrites.
+### Care requests (migration 0029)
+
+`platform_care_requests` holds the current state and immutable-after-acceptance proposal. `platform_care_messages` encrypts conversation bodies with the existing protected-data key. Each update requires the latest revision. Guarded message insertion and request update run in one D1 batch, so a losing concurrent update cannot leave an orphan message or double-accept.
+
+The client accepts scope/price/deadline; the specialist records actual external payment manually, then starts paid work. This is not acquiring or a wallet. Included work still requires agreement. A consultation can close with an answer before a quote exists. Completion of work records the result and how the specialist checked it; it does not change diagnostic evidence automatically.
+
+Migration 0029 copies old support requests/messages, bounding each historical thread by closure and the next request. Legacy support writes return 410 after migration; notifications link directly to the new request. Notification email identifiers include request revision. Existing overrides are retained read-only but never returned as active public instructions.
+
+`npm run preview:care` is a disposable development fixture using real local D1 migrations and gateway request handlers. It seeds fictitious data and auto-authenticates fake users; it must never be deployed or exposed as a production service. `/__qa/client` and `/__qa/specialist` select a role for local QA. Normal `npm run dev` remains the root Worker flow; supervised preview host flags select this fixture. Neither production entrypoint imports it.
+
+Release prerequisites and the uncompleted visual gate are recorded in `docs/CARE-REVIEW.md`.
 
 ### Monitoring and review data
 

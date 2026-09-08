@@ -65,7 +65,8 @@ const PLATFORM_MIGRATIONS = [
   "gateway/migrations/0025_diagnostics_cache.sql",
   "gateway/migrations/0026_telegram_destination_name.sql",
   "gateway/migrations/0027_review_widgets.sql",
-  "gateway/migrations/0028_reliable_observations.sql"
+  "gateway/migrations/0028_reliable_observations.sql",
+  "gateway/migrations/0029_care_requests.sql"
 ];
 
 test("site-wide loader safely recognizes visible phone numbers", () => {
@@ -89,244 +90,10 @@ test("site-wide loader safely recognizes visible phone numbers", () => {
   );
 });
 
-test("site-wide loader supports dynamic Tilda blocks and refreshes configuration", () => {
-  const loader = loaderJavascript();
-  assert.doesNotThrow(() => new Script(loader));
-  assert.match(loader, /const __name=/u);
-  assert.match(loader, /MutationObserver/u);
-  assert.match(loader, /createTreeWalker/u);
-  assert.match(loader, /cache:\s*"no-store"/u);
-  assert.match(loader, /setInterval\(loadConfig,\s*5000\)/u);
-  assert.match(loader, /document\.currentScript\s*\|\|/u);
-  assert.match(loader, /characterData:\s*true/u);
-  assert.match(loader, /attributeFilter:\s*\["href"\]/u);
-  assert.match(loader, /data-sitecare-ignore/u);
-  assert.match(loader, /a\[href\^='tel:'\]/u);
-  assert.match(loader, /buttonRules/u);
-  assert.match(loader, /phoneRules/u);
-  assert.match(loader, /contentRules/u);
-  assert.match(loader, /originalAttributes/u);
-  assert.match(loader, /\/applied\?key=/u);
-});
-
-test("site-wide loader changes only the selected occurrence of an identical phone", async () => {
-  const firstBlock = { id: "rec101", closest(selector) { return selector === "[id^='rec']" ? this : null; } };
-  const secondBlock = { id: "rec202", closest(selector) { return selector === "[id^='rec']" ? this : null; } };
-  const first = { nodeType: 3, nodeValue: "Телефон: +7 (999) 111-22-33", parentElement: firstBlock, isConnected: true };
-  const second = { nodeType: 3, nodeValue: "Телефон: +7 (999) 111-22-33", parentElement: secondBlock, isConnected: true };
-  const nodes = [first, second];
-  const attributes = new Map();
-  const document = {
-    nodeType: 9,
-    readyState: "complete",
-    currentScript: {
-      dataset: { sitecareSite: "site-test", sitecareKey: "abcdefghijklmnopqrstuvwxyz123456" },
-      src: "https://gateway.example.test/sitecare-loader.js"
-    },
-    scripts: [],
-    documentElement: { setAttribute(name, value) { attributes.set(name, value); } },
-    addEventListener() {},
-    querySelectorAll() { return []; },
-    createTreeWalker(root) {
-      const available = root === document ? nodes : [];
-      let index = 0;
-      return { nextNode() { return available[index++] || null; } };
-    }
-  };
-  const location = { origin: "https://example.test", pathname: "/", href: "https://example.test/" };
-  const config = {
-    enabled: true,
-    origin: location.origin,
-    scope: "site",
-    version: 1,
-    phoneTargetRules: [{
-      candidateId: "phone_rec202",
-      pagePath: "/",
-      blockId: "rec202",
-      source: "text",
-      occurrenceIndex: 0,
-      originalDigits: "79991112233",
-      newPhone: "+7 (555) 555-55-55",
-      scope: "element"
-    }]
-  };
-  class MutationObserver {
-    observe() {}
-    disconnect() {}
-  }
-  const window = {
-    location,
-    setTimeout() { return 1; },
-    setInterval() { return 1; },
-    addEventListener() {}
-  };
-  const context = {
-    document,
-    window,
-    location,
-    NodeFilter: { SHOW_TEXT: 4 },
-    MutationObserver,
-    URL,
-    clearTimeout() {},
-    fetch: async (url) => url.includes("/config?")
-      ? { ok: true, json: async () => config }
-      : { ok: true, json: async () => ({ ok: true }) }
-  };
-
-  new Script(loaderJavascript()).runInNewContext(context);
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(first.nodeValue, "Телефон: +7 (999) 111-22-33");
-  assert.equal(second.nodeValue, "Телефон: +7 (555) 555-55-55");
-  assert.equal(attributes.get("data-sitecare-status"), "ready");
-});
-
-test("one site-wide rule replaces an unformatted long phone in every visible place", async () => {
-  const makeBlock = (id) => ({ id, closest(selector) { return selector === "[id^='rec']" ? this : null; } });
-  const header = { nodeType: 3, nodeValue: "111111111111111", parentElement: makeBlock("rec101"), isConnected: true };
-  const contacts = { nodeType: 3, nodeValue: "Телефон: 111111111111111", parentElement: makeBlock("rec202"), isConnected: true };
-  const unrelated = { nodeType: 3, nodeValue: "Заказ 222222222222222", parentElement: makeBlock("rec303"), isConnected: true };
-  const nodes = [header, contacts, unrelated];
-  const attributes = new Map();
-  const document = {
-    nodeType: 9,
-    readyState: "complete",
-    currentScript: {
-      dataset: { sitecareSite: "site-test", sitecareKey: "abcdefghijklmnopqrstuvwxyz123456" },
-      src: "https://gateway.example.test/sitecare-loader.js"
-    },
-    scripts: [],
-    documentElement: { setAttribute(name, value) { attributes.set(name, value); } },
-    addEventListener() {},
-    querySelectorAll() { return []; },
-    createTreeWalker(root) {
-      const available = root === document ? nodes : [];
-      let index = 0;
-      return { nextNode() { return available[index++] || null; } };
-    }
-  };
-  const location = { origin: "https://example.test", pathname: "/", href: "https://example.test/" };
-  const config = {
-    enabled: true,
-    origin: location.origin,
-    scope: "site",
-    version: 2,
-    phoneTargetRules: [{
-      candidateId: "phone_rec202",
-      pagePath: "/",
-      blockId: "rec202",
-      source: "text",
-      occurrenceIndex: 0,
-      originalDigits: "111111111111111",
-      newPhone: "+7 999 123-45-67",
-      scope: "site"
-    }]
-  };
-  class MutationObserver {
-    observe() {}
-    disconnect() {}
-  }
-  const window = {
-    location,
-    setTimeout() { return 1; },
-    setInterval() { return 1; },
-    addEventListener() {}
-  };
-  const context = {
-    document,
-    window,
-    location,
-    NodeFilter: { SHOW_TEXT: 4 },
-    MutationObserver,
-    URL,
-    clearTimeout() {},
-    fetch: async (url) => url.includes("/config?")
-      ? { ok: true, json: async () => config }
-      : { ok: true, json: async () => ({ ok: true }) }
-  };
-
-  new Script(loaderJavascript()).runInNewContext(context);
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(header.nodeValue, "+7 999 123-45-67");
-  assert.equal(contacts.nodeValue, "Телефон: +7 999 123-45-67");
-  assert.equal(unrelated.nodeValue, "Заказ 222222222222222");
-  assert.equal(attributes.get("data-sitecare-status"), "ready");
-});
-
-test("site-wide loader sets image alt text via an image_alt content rule", async () => {
-  const imageAttrs = new Map([["src", "/photo-1.jpg"], ["alt", "Ремонт кухни"]]);
-  const image = {
-    tagName: "IMG",
-    isConnected: true,
-    getAttribute(name) { return imageAttrs.has(name) ? imageAttrs.get(name) : null; },
-    setAttribute(name, value) { imageAttrs.set(name, value); },
-    removeAttribute(name) { imageAttrs.delete(name); },
-    closest(selector) { return selector === "[id^='rec']" ? { id: "rec50" } : null; }
-  };
-  const attributes = new Map();
-  const document = {
-    nodeType: 9,
-    readyState: "complete",
-    currentScript: {
-      dataset: { sitecareSite: "site-test", sitecareKey: "abcdefghijklmnopqrstuvwxyz123456" },
-      src: "https://gateway.example.test/sitecare-loader.js"
-    },
-    scripts: [],
-    documentElement: { setAttribute(name, value) { attributes.set(name, value); } },
-    addEventListener() {},
-    querySelectorAll(selector) { return selector === "img" ? [image] : []; },
-    createTreeWalker() { return { nextNode() { return null; } }; }
-  };
-  const location = { origin: "https://example.test", pathname: "/", href: "https://example.test/" };
-  const config = {
-    enabled: true,
-    origin: location.origin,
-    scope: "site",
-    version: 1,
-    contentRules: [{
-      field: "image_alt",
-      candidateId: "img_rec50",
-      pagePath: "/",
-      blockId: "rec50",
-      matchIndex: 0,
-      scope: "element",
-      originalValue: "Ремонт кухни",
-      newValue: "Готовый ремонт кухни в скандинавском стиле",
-      version: 1
-    }]
-  };
-  class MutationObserver {
-    observe() {}
-    disconnect() {}
-  }
-  const window = {
-    location,
-    setTimeout() { return 1; },
-    setInterval() { return 1; },
-    addEventListener() {}
-  };
-  const context = {
-    document,
-    window,
-    location,
-    NodeFilter: { SHOW_TEXT: 4 },
-    MutationObserver,
-    URL,
-    clearTimeout() {},
-    fetch: async (url) => url.includes("/config?")
-      ? { ok: true, json: async () => config }
-      : { ok: true, json: async () => ({ ok: true }) }
-  };
-
-  new Script(loaderJavascript()).runInNewContext(context);
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(image.getAttribute("alt"), "Готовый ремонт кухни в скандинавском стиле");
-  assert.equal(attributes.get("data-sitecare-status"), "ready");
+test("public loader only observes connection and never changes site content",()=>{
+  const loader=loaderJavascript();assert.doesNotThrow(()=>new Script(loader));
+  assert.match(loader,/data-sitecare-loader/u);assert.match(loader,/credentials:"omit"/u);
+  assert.doesNotMatch(loader,/MutationObserver|replacePhoneText|textContent|innerHTML|selectionModeKind/u);
 });
 
 test("schedule replacement changes only recognizable working-hours text", () => {
@@ -644,7 +411,7 @@ test("central dashboard contains syntactically valid browser JavaScript", () => 
   assert.equal(scripts.length, 1);
   assert.doesNotThrow(() => new Script(scripts[0][1]));
   assert.match(markup, /Новый клиент/u);
-  assert.match(markup, /Не получается войти\?/u);
+  assert.match(markup, /ссылку для восстановления/u);
   assert.doesNotMatch(markup, /id="trialForm"|самостоятельн.+регистрац/iu);
   assert.doesNotMatch(markup, /BotFather|токен бота/iu);
   const resetMarkup = resetPasswordHtml("test-nonce", "reset_token_0123456789abcdef0123456789");
@@ -1087,8 +854,8 @@ test("one central platform provisions a client, isolates access and receives for
       csrf: accepted.csrf,
       body: { enabled: true, phone: "+7 (999) 123-45-67" }
     }), environment);
-    assert.equal(blockedBeforeSetup.status, 409);
-    assert.equal((await body(blockedBeforeSetup)).code, "SETUP_INCOMPLETE");
+    assert.equal(blockedBeforeSetup.status, 410);
+    assert.equal((await body(blockedBeforeSetup)).code, "SITE_EDITING_REMOVED");
 
     publishedLoaderCode = createdSite.loaderCode;
     const loaderCheck = await body(await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/check`, {
@@ -1099,184 +866,8 @@ test("one central platform provisions a client, isolates access and receives for
     }), environment));
     assert.equal(loaderCheck.loaderOk, true);
 
-    const phoneProposalResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/assistant`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { prompt: "Замени телефон на +7 11111111" }
-    }), environment);
-    assert.equal(phoneProposalResponse.status, 200);
-    const phoneProposal = await body(phoneProposalResponse);
-    assert.equal(phoneProposal.type, "change");
-    assert.equal(phoneProposal.kind, "phone");
-    assert.equal(phoneProposal.value, "+7 11111111");
-    assert.equal(phoneProposal.scope, "site");
-    assert.equal(phoneProposal.candidates.length, 1);
-    assert.equal(phoneProposal.usedAi, false);
-    const phoneAppliedResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/changes/apply`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { kind: phoneProposal.kind, value: phoneProposal.value, targetPhone: phoneProposal.targetPhone, phoneCandidateId: phoneProposal.suggestedCandidateId, scope: phoneProposal.scope }
-    }), environment);
-    assert.equal(phoneAppliedResponse.status, 200);
-    const phoneApplied = await body(phoneAppliedResponse);
-    assert.equal(phoneApplied.version, 2);
-    assert.equal(phoneApplied.status, "pending");
-    const targetedPhoneConfig = await body(await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/config?key=${loaderKey}`, {
-      origin: "https://client.example.test"
-    }), environment));
-    assert.equal(targetedPhoneConfig.phone, "");
-    assert.equal(targetedPhoneConfig.phoneRules.length, 0);
-    assert.equal(targetedPhoneConfig.phoneTargetRules.length, 1);
-    assert.equal(targetedPhoneConfig.phoneTargetRules[0].originalDigits, "79991112233");
-    assert.equal(targetedPhoneConfig.phoneTargetRules[0].newPhone, "+7 11111111");
-    assert.equal(targetedPhoneConfig.phoneTargetRules[0].scope, "site");
-    const phoneAck = await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/applied?key=${loaderKey}`, {
-      method: "POST",
-      body: JSON.stringify({ version: 2, pathname: "/page", phoneCount: 2, scheduleCount: 0, buttonCount: 0, phoneVerified: false, scheduleVerified: false, buttonVerified: false }),
-      contentType: "text/plain;charset=UTF-8",
-      origin: "https://client.example.test"
-    }), environment);
-    assert.equal(phoneAck.status, 200);
-    assert.equal((await database.prepare("SELECT status FROM platform_change_records WHERE site_id = ? AND version = 2").bind(createdSite.siteId).first()).status, "not_found");
-    const verifiedPhoneAck = await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/applied?key=${loaderKey}`, {
-      method: "POST",
-      body: JSON.stringify({ version: 2, pathname: "/page", phoneCount: 2, scheduleCount: 0, buttonCount: 0, phoneVerified: true, scheduleVerified: false, buttonVerified: false }),
-      contentType: "text/plain;charset=UTF-8",
-      origin: "https://client.example.test"
-    }), environment);
-    assert.equal(verifiedPhoneAck.status, 200);
-    assert.equal((await database.prepare("SELECT status FROM platform_change_records WHERE site_id = ? AND version = 2").bind(createdSite.siteId).first()).status, "confirmed");
-
-    const visiblePhoneQuestion = await body(await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/assistant`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { prompt: "Замени номер" }
-    }), environment));
-    assert.equal(visiblePhoneQuestion.type, "clarification");
-    assert.deepEqual(visiblePhoneQuestion.observed.phones, ["+7 11111111"]);
-    assert.match(visiblePhoneQuestion.message, /\+7 11111111/u);
-
-    const conversationBeforeSupport = await body(await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/conversation`, {
-      cookie: clientCookie
-    }), environment));
-    assert.equal(conversationBeforeSupport.conversation.messages.at(-1).role, "ai");
-    const operatorCannotRequestSupport = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/support`, {
-      method: "POST",
-      cookie: operatorCookie,
-      csrf: login.csrf,
-      body: { action: "request", reason: "Сам себе поддержка" }
-    }), environment);
-    assert.equal(operatorCannotRequestSupport.status, 403);
-    const supportCreatedResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/support`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { action: "request", reason: "Нужна помощь с нестандартным блоком." }
-    }), environment);
-    assert.equal(supportCreatedResponse.status, 201);
-    const supportCreated = await body(supportCreatedResponse);
-    assert.equal(supportCreated.request.status, "new");
-    assert.equal(supportCreated.conversation.supportRequest.requestId, supportCreated.request.requestId);
-    assert.equal(supportCreated.conversation.messages.some((message) => message.role === "system"), false);
-    const supportQueueResponse = await gateway.fetch(request("/v1/platform/support", {
-      cookie: operatorCookie
-    }), environment);
-    assert.equal(supportQueueResponse.status, 200);
-    const supportQueue = await body(supportQueueResponse);
-    assert.equal(supportQueue.counts.open, 1);
-    assert.equal(supportQueue.requests[0].accountName, "Клиент");
-    const clientSupportQueue = await gateway.fetch(request("/v1/platform/support", {
-      cookie: clientCookie
-    }), environment);
-    assert.equal(clientSupportQueue.status, 403);
-    const supportTakenResponse = await gateway.fetch(request(`/v1/platform/support/${supportCreated.request.requestId}`, {
-      method: "POST",
-      cookie: operatorCookie,
-      csrf: login.csrf,
-      body: { action: "take" }
-    }), environment);
-    assert.equal(supportTakenResponse.status, 200);
-    assert.equal((await body(supportTakenResponse)).request.status, "active");
-    const supportTakenAgainResponse = await gateway.fetch(request(`/v1/platform/support/${supportCreated.request.requestId}`, {
-      method: "POST",
-      cookie: operatorCookie,
-      csrf: login.csrf,
-      body: { action: "take" }
-    }), environment);
-    assert.equal(supportTakenAgainResponse.status, 200);
-    assert.equal((await body(supportTakenAgainResponse)).request.status, "active");
-    const takeMessages = await database.prepare(
-      "SELECT COUNT(*) AS count FROM platform_conversation_messages WHERE conversation_id = ? AND content = 'Поддержка подключилась к диалогу.'"
-    ).bind(supportCreated.conversation.conversationId).first();
-    assert.equal(Number(takeMessages.count), 1);
-    const supportReplyResponse = await gateway.fetch(request(`/v1/platform/support/${supportCreated.request.requestId}`, {
-      method: "POST",
-      cookie: operatorCookie,
-      csrf: login.csrf,
-      body: { action: "reply", content: "Вижу задачу. Проверю блок и напишу результат здесь." }
-    }), environment);
-    assert.equal(supportReplyResponse.status, 200);
-    assert.equal((await body(supportReplyResponse)).request.status, "waiting_client");
-    const conversationWithReply = await body(await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/conversation`, {
-      cookie: clientCookie
-    }), environment));
-    assert.equal(conversationWithReply.conversation.messages.at(-1).role, "support");
-    assert.equal(conversationWithReply.conversation.messages.at(-1).authorName, "Поддержка SiteCare");
-    assert.match(conversationWithReply.conversation.messages.at(-1).content, /Проверю блок/u);
-    assert.equal(conversationWithReply.conversation.messages.some((message) => message.role === "system"), false);
-    const supportResolvedResponse = await gateway.fetch(request(`/v1/platform/support/${supportCreated.request.requestId}`, {
-      method: "POST",
-      cookie: operatorCookie,
-      csrf: login.csrf,
-      body: { action: "resolve" }
-    }), environment);
-    assert.equal(supportResolvedResponse.status, 200);
-    assert.equal((await body(supportResolvedResponse)).request.status, "resolved");
-    const emptySupportQueue = await body(await gateway.fetch(request("/v1/platform/support", {
-      cookie: operatorCookie
-    }), environment));
-    assert.equal(emptySupportQueue.counts.open, 0);
-    assert.equal(emptySupportQueue.requests.length, 0);
-
-    const buttonProposalResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/assistant`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { prompt: "Заменить текст кнопки Send на Отправить" }
-    }), environment);
-    assert.equal(buttonProposalResponse.status, 200);
-    const buttonProposal = await body(buttonProposalResponse);
-    assert.equal(buttonProposal.type, "clarification");
-    assert.match(buttonProposal.message, /нашёл несколько/iu);
-    const selectedButtonResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/assistant`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { prompt: "первую" }
-    }), environment);
-    assert.equal(selectedButtonResponse.status, 200);
-    const selectedButton = await body(selectedButtonResponse);
-    assert.equal(selectedButton.type, "change");
-    assert.equal(selectedButton.kind, "button_text");
-    assert.equal(selectedButton.value, "Отправить");
-    assert.equal(selectedButton.candidates.length, 1);
-    assert.ok(selectedButton.suggestedCandidateId);
-    const buttonAppliedResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/changes/apply`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { kind: selectedButton.kind, value: selectedButton.value, candidateId: selectedButton.suggestedCandidateId, scope: "element" }
-    }), environment);
-    assert.equal(buttonAppliedResponse.status, 200);
-    assert.equal((await body(buttonAppliedResponse)).version, 3);
-    const earlyConfig = await body(await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/config?key=${loaderKey}`, {
-      origin: "https://client.example.test"
-    }), environment));
-    assert.equal(earlyConfig.buttonRules.length, 1);
-    assert.equal(earlyConfig.buttonRules[0].newText, "Отправить");
+    const removedEditor = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/changes/apply`, {method:"POST",cookie:clientCookie,csrf:accepted.csrf,body:{kind:"phone",value:"+7 11111111"}}),environment);
+    assert.equal(removedEditor.status,410);
 
     const webhook = new URL(createdSite.webhookUrl);
     const handshakeResponse = await gateway.fetch(request(`${webhook.pathname}${webhook.search}`, {
@@ -1298,8 +889,8 @@ test("one central platform provisions a client, isolates access and receives for
       csrf: accepted.csrf,
       body: { enabled: true, phone: "+7 (999) 123-45-67" }
     }), environment);
-    assert.equal(blockedWithoutTestLead.status, 409);
-    assert.equal((await body(blockedWithoutTestLead)).code, "SETUP_INCOMPLETE");
+    assert.equal(blockedWithoutTestLead.status, 410);
+    assert.equal((await body(blockedWithoutTestLead)).code, "SITE_EDITING_REMOVED");
 
     const setupReceiptResponse = await gateway.fetch(request(`${webhook.pathname}${webhook.search}`, {
       method: "POST",
@@ -1313,39 +904,14 @@ test("one central platform provisions a client, isolates access and receives for
     assert.ok(readyState.form_verified_at);
     assert.ok(readyState.last_form_at);
 
-    const overrideResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/overrides`, {
-      method: "PATCH",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { enabled: true, phone: "+7 (999) 123-45-67", scheduleText: "Пн–Пт 10:00–19:00", buttonText: "Оставить заявку", buttonUrl: "/form" }
-    }), environment);
-    assert.equal(overrideResponse.status, 200);
-    const historyResponse = await body(await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/overrides`, {
-      cookie: clientCookie
-    }), environment));
-    assert.deepEqual(historyResponse.history.map((item) => item.version), [4, 3, 2, 1]);
-    const changedAgain = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/overrides`, {
-      method: "PATCH",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { phone: "+7 (999) 000-00-00" }
-    }), environment);
-    assert.equal((await body(changedAgain)).version, 5);
-    const rolledBack = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/overrides/rollback`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { version: 4 }
-    }), environment);
-    assert.deepEqual(await body(rolledBack), { ok: true, version: 6, restoredVersion: 4 });
     const publicConfiguration = await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/config?key=${loaderKey}`, {
       origin: "https://client.example.test"
     }), environment);
     assert.equal(publicConfiguration.status, 200);
     const config = await body(publicConfiguration);
-    assert.equal(config.phone, "+7 (999) 123-45-67");
-    assert.equal(config.enabled, true);
-    assert.equal(config.buttonRules.length, 1);
+    assert.equal(config.phone, "");
+    assert.equal(config.enabled, false);
+    assert.equal(config.buttonRules.length, 0);
     const forgedConfiguration = await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/config?key=${loaderKey}`, {
       origin: "https://attacker.example.test"
     }), environment);
@@ -1487,39 +1053,8 @@ test("one central platform provisions a client, isolates access and receives for
     }), environment);
     assert.equal(paidAccess.status, 200);
 
-    const secondSupport = await body(await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/support`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { action: "request", reason: "Поддержка должна изменить номер вместо меня." }
-    }), environment));
-    const operatorApplied = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/changes/apply`, {
-      method: "POST",
-      cookie: operatorCookie,
-      csrf: login.csrf,
-      body: { kind: "phone", value: "+7 22222222", targetPhone: "+7 11111111", phoneCandidateId: targetedPhoneConfig.phoneTargetRules[0].candidateId, scope: "site" }
-    }), environment);
-    assert.equal(operatorApplied.status, 200);
-    assert.equal((await body(operatorApplied)).version, 7);
-    const operatorConfig = await body(await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/config?key=${loaderKey}`, {
-      origin: "https://client.example.test"
-    }), environment));
-    assert.equal(operatorConfig.phone, "");
-    assert.equal(operatorConfig.phoneTargetRules.find((rule) => rule.originalDigits === "79991112233")?.newPhone, "+7 22222222");
-    const operatorResultReply = await gateway.fetch(request(`/v1/platform/support/${secondSupport.request.requestId}`, {
-      method: "POST",
-      cookie: operatorCookie,
-      csrf: login.csrf,
-      body: { action: "reply", content: "Готово: изменение «Телефон» применено. Новое значение: «+7 22222222»." }
-    }), environment);
-    assert.equal(operatorResultReply.status, 200);
-    const resolvedBySupport = await gateway.fetch(request(`/v1/platform/support/${secondSupport.request.requestId}`, {
-      method: "POST",
-      cookie: operatorCookie,
-      csrf: login.csrf,
-      body: { action: "resolve" }
-    }), environment);
-    assert.equal(resolvedBySupport.status, 200);
+    const removedForSpecialist = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/changes/apply`, {method:"POST",cookie:operatorCookie,csrf:login.csrf,body:{kind:"phone",value:"+7 22222222"}}),environment);
+    assert.equal(removedForSpecialist.status,410);
 
     for (const number of [2, 3]) {
       const extra = await gateway.fetch(request(`/v1/platform/accounts/${client.accountId}/sites`, {
@@ -1570,11 +1105,11 @@ test("one central platform provisions a client, isolates access and receives for
     const stillApplied = await body(await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/config?key=${loaderKey}`, {
       origin: "https://client.example.test"
     }), environment));
-    assert.equal(stillApplied.enabled, true);
+    assert.equal(stillApplied.enabled, false);
 
     const page = await gateway.fetch(request("/app", { origin: null }), environment);
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /Всё важное о сайте/iu);
+    assert.match(await page.text(), /Сопровождение сайта/iu);
     assert.match(page.headers.get("Content-Security-Policy"), /frame-ancestors 'none'/u);
   } finally {
     globalThis.fetch = originalFetch;
@@ -1582,168 +1117,9 @@ test("one central platform provisions a client, isolates access and receives for
   }
 });
 
-test("image alt text goes through propose, apply, live-verify and rollback", async () => {
-  const { runtime, database } = await databaseWithMigrations();
-  const originalFetch = globalThis.fetch;
-  let publishedLoaderCode = "";
-  globalThis.fetch = async (url, options = {}) => {
-    const parsed = new URL(url);
-    if (parsed.hostname === "api.openai.com") {
-      return Response.json({
-        output_text: JSON.stringify({
-          reply: "Добавил описание для найденной картинки.",
-          mode: "change",
-          change_kind: "image_alt",
-          change_value: "Ремонт кухни в скандинавском стиле",
-          target_hint: "",
-          support_suggested: false,
-          support_reason: "",
-          support_summary: "",
-          suggestions: []
-        })
-      });
-    }
-    if (parsed.hostname === "image-client.example.test" && parsed.pathname === "/page") {
-      return new Response(`<!doctype html><html><head>${publishedLoaderCode}</head><body><div id="rec1"><h2>Наши работы</h2><img src="/photo.jpg"></div></body></html>`, {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" }
-      });
-    }
-    if (parsed.hostname === "image-client.example.test") {
-      // A distinct, image-less and link-less root page keeps the site-wide
-      // crawl (which visits both target_url and the site root) from finding
-      // the same image twice under two different page paths.
-      return new Response(`<!doctype html><html><head>${publishedLoaderCode}</head><body><p>Главная страница</p></body></html>`, {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" }
-      });
-    }
-    throw new Error(`Unexpected URL: ${url}`);
-  };
-  try {
-    const environment = { ...env(database), OPENAI_API_KEY: "sk-test-image-alt" };
-    const platformBootstrap = await gateway.fetch(request("/v1/admin/platform/bootstrap", {
-      method: "POST",
-      token: ADMIN_TOKEN,
-      body: { email: "owner-img@example.test", displayName: "Owner", password: "Owner password 123" },
-      origin: null
-    }), environment);
-    assert.equal(platformBootstrap.status, 200);
-    const loginResponse = await gateway.fetch(request("/v1/platform/auth/login", {
-      method: "POST",
-      body: { email: "owner-img@example.test", password: "Owner password 123", remember: true }
-    }), environment);
-    const login = await body(loginResponse);
-    const operatorCookie = loginResponse.headers.get("Set-Cookie").split(";")[0];
+// Image mutation route retirement is covered alongside phone/button routes in
+// platform-care.test.js; pure extraction/validation coverage remains above.
 
-    const clientResponse = await gateway.fetch(request("/v1/platform/operator/accounts", {
-      method: "POST",
-      cookie: operatorCookie,
-      csrf: login.csrf,
-      body: { name: "Клиент с картинкой", ownerEmail: "image-client@example.test", ownerName: "Client" }
-    }), environment);
-    const client = await body(clientResponse);
-    const invite = new URL(client.inviteUrl).searchParams.get("token");
-    const acceptedResponse = await gateway.fetch(request("/v1/platform/invites/accept", {
-      method: "POST",
-      body: { token: invite, email: "image-client@example.test", displayName: "Client", password: "Client password 123" }
-    }), environment);
-    const accepted = await body(acceptedResponse);
-    const clientCookie = acceptedResponse.headers.get("Set-Cookie").split(";")[0];
-
-    const createSiteResponse = await gateway.fetch(request(`/v1/platform/accounts/${client.accountId}/sites`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { name: "Портфолио", url: "https://image-client.example.test/page", scope: "site" }
-    }), environment);
-    assert.equal(createSiteResponse.status, 201);
-    const createdSite = await body(createSiteResponse);
-    assert.equal(createdSite.formRequired, false);
-    const loaderKey = /data-sitecare-key="([A-Za-z0-9_-]+)"/u.exec(createdSite.loaderCode)?.[1];
-    assert.ok(loaderKey);
-
-    publishedLoaderCode = createdSite.loaderCode;
-    const loaderCheck = await body(await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/check`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: {}
-    }), environment));
-    assert.equal(loaderCheck.loaderOk, true);
-
-    const proposalResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/assistant`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { prompt: "Добавь описание для картинки без alt-текста" }
-    }), environment);
-    assert.equal(proposalResponse.status, 200);
-    const proposal = await body(proposalResponse);
-    assert.equal(proposal.type, "change");
-    assert.equal(proposal.kind, "image_alt");
-    assert.equal(proposal.value, "Ремонт кухни в скандинавском стиле");
-    assert.equal(proposal.candidates.length, 1);
-    assert.ok(proposal.suggestedCandidateId);
-    assert.match(proposal.suggestedCandidateId, /^img_/u);
-
-    const appliedResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/changes/apply`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { kind: proposal.kind, value: proposal.value, candidateId: proposal.suggestedCandidateId }
-    }), environment);
-    assert.equal(appliedResponse.status, 200);
-    const applied = await body(appliedResponse);
-    assert.equal(applied.status, "pending");
-    const appliedVersion = applied.version;
-
-    const changeRecordAfterApply = await database.prepare(
-      "SELECT status FROM platform_change_records WHERE site_id = ? AND version = ?"
-    ).bind(createdSite.siteId, appliedVersion).first();
-    assert.equal(changeRecordAfterApply.status, "pending");
-
-    const config = await body(await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/config?key=${loaderKey}`, {
-      origin: "https://image-client.example.test"
-    }), environment));
-    assert.equal(config.contentRules.length, 1);
-    assert.equal(config.contentRules[0].field, "image_alt");
-    assert.equal(config.contentRules[0].newValue, "Ремонт кухни в скандинавском стиле");
-
-    const appliedReportResponse = await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/applied?key=${loaderKey}`, {
-      method: "POST",
-      origin: "https://image-client.example.test",
-      body: JSON.stringify({ version: appliedVersion, pathname: "/page", contentCount: 1, contentVerified: true }),
-      contentType: "text/plain;charset=UTF-8"
-    }), environment);
-    assert.equal(appliedReportResponse.status, 200);
-    const confirmedRecord = await database.prepare(
-      "SELECT status FROM platform_change_records WHERE site_id = ? AND version = ?"
-    ).bind(createdSite.siteId, appliedVersion).first();
-    assert.equal(confirmedRecord.status, "confirmed");
-
-    const rollbackResponse = await gateway.fetch(request(`/v1/platform/sites/${createdSite.siteId}/overrides/rollback`, {
-      method: "POST",
-      cookie: clientCookie,
-      csrf: accepted.csrf,
-      body: { version: appliedVersion - 1 }
-    }), environment);
-    assert.equal(rollbackResponse.status, 200);
-    const configAfterRollback = await body(await gateway.fetch(request(`/v1/public/sites/${createdSite.siteId}/config?key=${loaderKey}`, {
-      origin: "https://image-client.example.test"
-    }), environment));
-    assert.equal(configAfterRollback.contentRules.length, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-    await runtime.dispose();
-  }
-});
-
-// A real, saved excerpt of what a 2GIS organization reviews page returns
-// from a plain unauthenticated fetch (verified live against 2gis.ru while
-// building this adapter): the review data is not scraped from obfuscated
-// DOM markup, it's a complete, structured JSON payload React hydrates from,
-// embedded server-side as `var __REACT_QUERY_STATE__ = JSON.parse('...')`.
 const DGIS_FIXTURE_HTML = `<!doctype html><html><head><title>Отзывы</title></head><body>
 <script>
   var __REACT_QUERY_STATE__ = JSON.parse('{"queries":[{"queryKey":["fetchEntityAlbums",{"objectId":"123456789"}],"state":{"data":{"code":200}}},{"queryKey":["fetchEntityReviews",["123456789","branch",null,null,null,null,null,"trust"]],"state":{"data":{"pages":[{"items":[{"id":"244470229","date_created":"2026-05-23T20:20:45.375219+07:00","rating":5,"text":"Однозначно рекомендую! Чисто, красиво, приятно, опрятно!","user":{"id":"63876310","name":"Алекс Пож","photo_preview_urls":{"url":""}}},{"id":"991122334","date_created":"2026-06-26T16:05:10.864065+07:00","rating":4,"text":"Хорошее место, но долго ждали заказ.","user":{"id":"45575699","name":"Игорь Игоревич","photo_preview_urls":{"url":"https://i2.photo.2gis.com/images/profile/example_64x64.jpg"}}},{"id":"","date_created":"2026-06-01T00:00:00.000000+07:00","rating":3,"text":"Отзыв без идентификатора должен быть отброшен.","user":{"name":"Без id"}}],"total":79,"rating":4.8,"hasMore":true}]}}}]}');

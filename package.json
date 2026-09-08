@@ -4,12 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --local",
+    "dev": "node scripts/dev.mjs",
     "test": "node --test --test-concurrency=1 \"test/**/*.test.js\"",
-    "check": "node --check src/index.js && node --check src/core.js && node --check src/schedule.js && node --check src/forms.js && node --check src/notifications.js && node --check src/gateway-notifications.js && node --check src/assistant.js && node --check src/admin.js && node --check gateway/src/platform-core.js && node --check gateway/src/platform-monitor.js && node --check gateway/src/platform-openai.js && node --check gateway/src/platform-assistant.js && node --check gateway/src/platform-leads.js && node --check gateway/src/platform-support.js && node --check gateway/src/platform-ui.js && node --check gateway/src/platform-email.js && node --check gateway/src/platform.js && node --check gateway/src/index.js && node --check deploy-windows.mjs && node --test --test-concurrency=1 \"test/**/*.test.js\"",
+    "check": "node --check src/index.js && node --check src/core.js && node --check src/schedule.js && node --check src/forms.js && node --check src/notifications.js && node --check src/gateway-notifications.js && node --check src/assistant.js && node --check src/admin.js && node --check gateway/src/platform-core.js && node --check gateway/src/platform-monitor.js && node --check gateway/src/platform-openai.js && node --check gateway/src/platform-assistant.js && node --check gateway/src/platform-leads.js && node --check gateway/src/platform-support.js && node --check gateway/src/platform-ui.js && node --check gateway/src/platform-email.js && node --check gateway/src/platform.js && node --check gateway/src/index.js && node --check deploy-windows.mjs && node --check gateway/src/platform-care.js && node --check gateway/src/platform-findings.js && node --check gateway/src/service-ui.js && node --check gateway/src/service-ui-client.js && node --check gateway/src/service-ui-styles.js && node --test --test-concurrency=1 \"test/**/*.test.js\"",
     "db:local": "wrangler d1 migrations apply sitecare-ketedes-page169452909-db --local",
     "db:remote": "wrangler d1 migrations apply sitecare-ketedes-page169452909-db --remote",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "preview:care": "node scripts/preview-care.mjs"
   },
   "devDependencies": {
     "miniflare": "5.20260730.0-alpha",
